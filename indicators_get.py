@@ -44,7 +44,7 @@ def quotes_get(symbols, period_name, source_name):
     print("--- ---")
 
     for symbol in symbols:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&apikey={av_apikey}"
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&outputsize=full&apikey={av_apikey}"
         print(f"--- PROCESSING {symbol} -- START ---")
         while True:
             try:
@@ -66,6 +66,9 @@ def quotes_get(symbols, period_name, source_name):
                     weekday_last_year = f"{weekday_last.year:02}"
                     weekday_last_month = f"{weekday_last.month:02}"
                     weekday_last_day = f"{weekday_last.day:02}"
+                    # weekday_last_year = "2022"
+                    # weekday_last_month = "10"
+                    # weekday_last_day = "28"
                     if (
                         f"{weekday_last_year}-{weekday_last_month}-{weekday_last_day}"
                         in quote[f"Time Series (Daily)"]
@@ -126,9 +129,13 @@ def quotes_get(symbols, period_name, source_name):
                     quote_price_index_6month = float(quote_price) / float(
                         quote_price_6months
                     )
+                    if quote_price_index_6month < 0:
+                        quote_price_index_6month = 0
                     quote_price_index_12month = float(quote_price) / float(
                         quote_price_12months
                     )
+                    if quote_price_index_12month < 0:
+                        quote_price_index_12month = 0
                     break
             except requests.exceptions.HTTPError as err:
                 quote_price = 0.0
@@ -229,6 +236,7 @@ def quotes_get(symbols, period_name, source_name):
     )
     for idx, quote_data_item in enumerate(quote_data):
         quote_data[idx]["Earnings Yield (12months) rank"] = idx + 1
+
     print("--- Rank based on Earnings Yield (12months) -- END ---")
 
     # Rank based on ROA
