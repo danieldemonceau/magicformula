@@ -36,24 +36,42 @@ def quotes_get(symbols, period_name, source_name):
     quote_data = []
 
     # This is because of the limitation of 5 requests / minute, thus 12 seconds wait between API Calls
-    time_sleep = 4
+    time_sleep = 5
     # print("\t".join(headers))
 
     print("--- ---")
     print("--- QUOTE EXTRACTION -- START ---")
     print("--- ---")
 
+    shouldContinue = True
+
     for symbol in symbols:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&outputsize=full&apikey={av_apikey}"
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&apikey={av_apikey}"
         print(f"--- PROCESSING {symbol} -- START ---")
-        while True:
+        print(f"--- PROCESSING {url} -- START ---")
+        count = 0
+
+        quote_price = 0.0
+        quote_price_index_6month = 0.0
+        quote_price_index_12month = 0.0
+        quote_bm = 0.0
+        quote_fcfy_12months = 0.0
+        quote_ps = 0.0
+        quote_ey_12months = 0.0
+        quote_roa = 0.0
+
+        if not shouldContinue:
+            break
+        while count < 3:
             try:
+                count += 1
                 response = requests.get(url)
                 quote = response.json()
                 if "Error Message" in quote:
                     quote_price = 0.0
                     quote_price_index_6month = 0.0
                     quote_price_index_12month = 0.0
+                    print("error message in quote", quote["Error Message"])
                     break
                 elif "Meta Data" in quote:
                     ###################################################
@@ -137,10 +155,31 @@ def quotes_get(symbols, period_name, source_name):
                     if quote_price_index_12month < 0:
                         quote_price_index_12month = 0
                     break
+                elif "Information" in quote:
+                    if (
+                        quote["Information"]
+                        == "Thank you for using Alpha Vantage! You have reached the 100 requests/day limit for your free API key. Please subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly remove all daily rate limits."
+                    ):
+                        print("--- Alpha Vantage Daily limit reached ---")
+                        print(f"--- Trying again in {time_sleep} seconds")
+                        time.sleep(time_sleep)
+                        break
+                elif "Note" in quote:
+                    if (
+                        quote["Note"]
+                        == "Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute and 100 calls per day. Please visit https://www.alphavantage.co/premium/ if you would like to target a higher API call frequency."
+                    ):
+                        print("--- Alpha Vantage Daily limit reached ---")
+                        print(f"--- Trying again in {time_sleep} seconds")
+                        time.sleep(time_sleep)
+                        break
             except requests.exceptions.HTTPError as err:
                 quote_price = 0.0
                 quote_price_index_6month = 0.0
                 quote_price_index_12month = 0.0
+                print("error", err)
+                print(f"--- Trying again in {time_sleep} seconds")
+                time.sleep(time_sleep)
                 break
             except:
                 print("--- Failed to decode JSON")
