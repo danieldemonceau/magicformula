@@ -2,28 +2,20 @@
 
 import logging
 import time
-from datetime import datetime
 
 from src.calculations.exceptions import InvalidDataError, MissingDataError
-from src.calculations.financial_metrics import (
-    calculate_acquirers_multiple,
-    calculate_earnings_yield,
-    calculate_enterprise_value,
-    calculate_return_on_capital,
-    extract_financial_data_from_yfinance,
-)
+from src.calculations.financial_metrics import extract_financial_data_from_yfinance
 from src.data.cache import TickerCache
 from src.data.fetchers.base_fetcher import BaseFetcher
 from src.data.fetchers.fetcher_utils import (
+    build_ticker_data,
+    calculate_metrics_from_financial_data,
     fetch_fundamental_data_shared,
-    fetch_price_data_batch,
     fetch_price_data_shared,
 )
 from src.data.models.ticker_data import TickerData
 from src.data.models.ticker_status import TickerStatus
-from src.data.quality import assess_data_quality
 from src.utils.date_utils import get_last_business_day
-from src.utils.decorators import retry
 
 logger = logging.getLogger("magicformula")
 
@@ -77,8 +69,10 @@ class YFinanceFetcher(BaseFetcher):
                 break
             except (ConnectionError, TimeoutError, ValueError) as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Network error fetching {symbol} (attempt {attempt + 1}), retrying...: {e}")
-                    time.sleep(retry_delay * (2 ** attempt))
+                    logger.warning(
+                        f"Network error fetching {symbol} (attempt {attempt + 1}), retrying...: {e}"
+                    )
+                    time.sleep(retry_delay * (2**attempt))
                 else:
                     logger.error(f"Failed to fetch {symbol} after {max_retries} attempts: {e}")
                     raise
@@ -88,56 +82,14 @@ class YFinanceFetcher(BaseFetcher):
             symbol=symbol,
         )
 
-        enterprise_value = None
-        earnings_yield = None
-        return_on_capital = None
-        acquirers_multiple = None
+        # Use shared calculation function to eliminate duplication
+        metrics = calculate_metrics_from_financial_data(financial_data, symbol)
+        enterprise_value = metrics["enterprise_value"]
+        earnings_yield = metrics["earnings_yield"]
+        return_on_capital = metrics["return_on_capital"]
+        acquirers_multiple = metrics["acquirers_multiple"]
 
-        if financial_data["market_cap"]:
-            enterprise_value = calculate_enterprise_value(
-                financial_data["market_cap"],
-                financial_data["total_debt"] or 0.0,
-                financial_data["cash"] or 0.0,
-            )
-
-            if financial_data["ebit"] and enterprise_value:
-                try:
-                    earnings_yield = calculate_earnings_yield(
-                        financial_data["ebit"],
-                        enterprise_value,
-                    )
-                except (MissingDataError, ValueError, InvalidDataError) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate earnings_yield: {e}",
-                    )
-
-                try:
-                    acquirers_multiple = calculate_acquirers_multiple(
-                        financial_data["ebit"],
-                        enterprise_value,
-                    )
-                except (MissingDataError, ValueError, InvalidDataError) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate acquirers_multiple: {e}",
-                    )
-
-            if financial_data["ebit"] and (
-                financial_data["net_working_capital"] is not None
-                or financial_data["net_fixed_assets"] is not None
-            ):
-                try:
-                    return_on_capital = calculate_return_on_capital(
-                        financial_data["ebit"],
-                        financial_data["net_working_capital"],
-                        financial_data["net_fixed_assets"],
-                    )
-                except (MissingDataError, ValueError, InvalidDataError) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate return_on_capital: {e}",
-                    )
-        else:
-            logger.debug(f"{symbol}: Missing market_cap, cannot calculate EV-based metrics")
-
+        # Debug logging for missing Magic Formula metrics
         if earnings_yield is None or return_on_capital is None:
             logger.debug(
                 f"{symbol}: Missing Magic Formula metrics - "
@@ -149,30 +101,14 @@ class YFinanceFetcher(BaseFetcher):
                 f"ROC: {return_on_capital}",
             )
 
-        ticker_data = TickerData(
+        # Use shared function to build TickerData
+        ticker_data = build_ticker_data(
             symbol=symbol,
-            sector=financial_data.get("sector"),
-            industry=financial_data.get("industry"),
-            price=price_data["price"],
-            market_cap=financial_data["market_cap"],
-            total_debt=financial_data["total_debt"],
-            cash=financial_data["cash"],
-            ebit=financial_data["ebit"],
-            net_working_capital=financial_data["net_working_capital"],
-            net_fixed_assets=financial_data["net_fixed_assets"],
-            enterprise_value=enterprise_value,
-            earnings_yield=earnings_yield,
-            return_on_capital=return_on_capital,
-            acquirers_multiple=acquirers_multiple,
-            price_index_6month=price_data["price_index_6month"],
-            price_index_12month=price_data["price_index_12month"],
-            book_to_market=fundamental_data.get("book_to_market"),
-            free_cash_flow_yield=fundamental_data.get("free_cash_flow_yield"),
-            price_to_sales=fundamental_data.get("price_to_sales"),
-            data_timestamp=datetime.now(),
+            price_data=price_data,
+            financial_data=financial_data,
+            fundamental_data=fundamental_data,
+            metrics=metrics,
         )
-
-        ticker_data = assess_data_quality(ticker_data)
 
         if self.use_cache and self.cache:
             self.cache.set(symbol, ticker_data)
@@ -202,6 +138,25 @@ class YFinanceFetcher(BaseFetcher):
                 error_ticker = TickerData(
                     symbol=symbol,
                     status=TickerStatus.DATA_UNAVAILABLE,
+                    sector=None,
+                    industry=None,
+                    price=None,
+                    market_cap=None,
+                    total_debt=None,
+                    cash=None,
+                    ebit=None,
+                    net_working_capital=None,
+                    net_fixed_assets=None,
+                    enterprise_value=None,
+                    earnings_yield=None,
+                    return_on_capital=None,
+                    acquirers_multiple=None,
+                    price_index_6month=None,
+                    price_index_12month=None,
+                    book_to_market=None,
+                    free_cash_flow_yield=None,
+                    price_to_sales=None,
+                    data_timestamp=None,
                     quality_score=0.0,
                 )
                 results.append(error_ticker)
@@ -211,6 +166,25 @@ class YFinanceFetcher(BaseFetcher):
                 error_ticker = TickerData(
                     symbol=symbol,
                     status=TickerStatus.DATA_UNAVAILABLE,
+                    sector=None,
+                    industry=None,
+                    price=None,
+                    market_cap=None,
+                    total_debt=None,
+                    cash=None,
+                    ebit=None,
+                    net_working_capital=None,
+                    net_fixed_assets=None,
+                    enterprise_value=None,
+                    earnings_yield=None,
+                    return_on_capital=None,
+                    acquirers_multiple=None,
+                    price_index_6month=None,
+                    price_index_12month=None,
+                    book_to_market=None,
+                    free_cash_flow_yield=None,
+                    price_to_sales=None,
+                    data_timestamp=None,
                     quality_score=0.0,
                 )
                 results.append(error_ticker)
@@ -219,5 +193,3 @@ class YFinanceFetcher(BaseFetcher):
                 time.sleep(self.sleep_time)
 
         return results
-
-

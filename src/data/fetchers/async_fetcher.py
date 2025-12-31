@@ -5,22 +5,17 @@ import logging
 import time
 from datetime import datetime
 
-from src.calculations.exceptions import InvalidDataError, RateLimitError
-from src.calculations.financial_metrics import (
-    calculate_acquirers_multiple,
-    calculate_earnings_yield,
-    calculate_enterprise_value,
-    calculate_return_on_capital,
-    extract_financial_data_from_yfinance,
-)
+from src.calculations.exceptions import RateLimitError
+from src.calculations.financial_metrics import extract_financial_data_from_yfinance
 from src.data.fetchers.base_fetcher import BaseFetcher
 from src.data.fetchers.fetcher_utils import (
+    build_ticker_data,
+    calculate_metrics_from_financial_data,
     fetch_fundamental_data_shared,
     fetch_price_data_shared,
 )
 from src.data.models.ticker_data import TickerData
 from src.data.models.ticker_status import TickerStatus
-from src.data.quality import assess_data_quality
 from src.utils.date_utils import get_last_business_day
 
 logger = logging.getLogger("magicformula")
@@ -31,8 +26,8 @@ class AsyncYFinanceFetcher(BaseFetcher):
 
     def __init__(
         self,
-        max_concurrent: int = 5,
-        requests_per_second: float = 2.0,
+        max_concurrent: int = 10,  # Conservative default to avoid overwhelming API
+        requests_per_second: float = 5.0,  # Conservative default to respect rate limits
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
         use_cache: bool = True,
@@ -52,6 +47,7 @@ class AsyncYFinanceFetcher(BaseFetcher):
         self.retry_delay = retry_delay
         self.use_cache = use_cache
         self._rate_limiter = asyncio.Semaphore(max_concurrent)
+        self._rate_lock = asyncio.Lock()  # Protect rate limit state
         self._last_request_time = 0.0
         self._min_request_interval = 1.0 / requests_per_second
 
@@ -70,7 +66,7 @@ class AsyncYFinanceFetcher(BaseFetcher):
             for attempt in range(self.retry_attempts):
                 try:
                     return await self._fetch_ticker_data_internal(symbol)
-                except RateLimitError as e:
+                except RateLimitError:
                     if attempt < self.retry_attempts - 1:
                         wait_time = self.retry_delay * (2**attempt)
                         logger.warning(
@@ -87,21 +83,32 @@ class AsyncYFinanceFetcher(BaseFetcher):
                         )
                         await asyncio.sleep(wait_time)
                     else:
-                        logger.error(f"Failed to fetch {symbol} after {self.retry_attempts} attempts: {e}")
+                        logger.error(
+                            f"Failed to fetch {symbol} after {self.retry_attempts} attempts: {e}"
+                        )
                         return self._create_error_ticker_data(symbol, str(e))
 
             return self._create_error_ticker_data(symbol, "Max retries exceeded")
 
     async def _wait_for_rate_limit(self) -> None:
-        """Wait to respect rate limit."""
-        current_time = time.time()
-        time_since_last = current_time - self._last_request_time
+        """Wait to respect rate limit (thread-safe, lock released during sleep)."""
+        # Calculate wait time while holding lock
+        async with self._rate_lock:
+            current_time = time.time()
+            time_since_last = current_time - self._last_request_time
+            wait_time = (
+                self._min_request_interval - time_since_last
+                if time_since_last < self._min_request_interval
+                else 0.0
+            )
 
-        if time_since_last < self._min_request_interval:
-            wait_time = self._min_request_interval - time_since_last
+        # Release lock during sleep to allow other coroutines to calculate their wait times
+        if wait_time > 0:
             await asyncio.sleep(wait_time)
 
-        self._last_request_time = time.time()
+        # Re-acquire lock to update timestamp atomically
+        async with self._rate_lock:
+            self._last_request_time = time.time()
 
     async def _fetch_ticker_data_internal(self, symbol: str) -> TickerData:
         """Internal async fetch implementation.
@@ -133,56 +140,14 @@ class AsyncYFinanceFetcher(BaseFetcher):
             symbol=symbol,
         )
 
-        enterprise_value = None
-        earnings_yield = None
-        return_on_capital = None
-        acquirers_multiple = None
+        # Use shared calculation function to eliminate duplication
+        metrics = calculate_metrics_from_financial_data(financial_data, symbol)
+        enterprise_value = metrics["enterprise_value"]
+        earnings_yield = metrics["earnings_yield"]
+        return_on_capital = metrics["return_on_capital"]
+        acquirers_multiple = metrics["acquirers_multiple"]
 
-        if financial_data["market_cap"]:
-            enterprise_value = calculate_enterprise_value(
-                financial_data["market_cap"],
-                financial_data["total_debt"] or 0.0,
-                financial_data["cash"] or 0.0,
-            )
-
-            if financial_data["ebit"] and enterprise_value:
-                try:
-                    earnings_yield = calculate_earnings_yield(
-                        financial_data["ebit"],
-                        enterprise_value,
-                    )
-                except (ValueError, Exception) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate earnings_yield: {e}",
-                    )
-
-                try:
-                    acquirers_multiple = calculate_acquirers_multiple(
-                        financial_data["ebit"],
-                        enterprise_value,
-                    )
-                except (ValueError, Exception) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate acquirers_multiple: {e}",
-                    )
-
-            if financial_data["ebit"] and (
-                financial_data["net_working_capital"] is not None
-                or financial_data["net_fixed_assets"] is not None
-            ):
-                try:
-                    return_on_capital = calculate_return_on_capital(
-                        financial_data["ebit"],
-                        financial_data["net_working_capital"],
-                        financial_data["net_fixed_assets"],
-                    )
-                except (ValueError, Exception, InvalidDataError) as e:
-                    logger.debug(
-                        f"{symbol}: Could not calculate return_on_capital: {e}",
-                    )
-        else:
-            logger.debug(f"{symbol}: Missing market_cap, cannot calculate EV-based metrics")
-
+        # Debug logging for missing Magic Formula metrics
         if earnings_yield is None or return_on_capital is None:
             logger.debug(
                 f"{symbol}: Missing Magic Formula metrics - "
@@ -194,32 +159,14 @@ class AsyncYFinanceFetcher(BaseFetcher):
                 f"ROC: {return_on_capital}",
             )
 
-        ticker_data = TickerData(
+        # Use shared function to build TickerData
+        return build_ticker_data(
             symbol=symbol,
-            sector=financial_data.get("sector"),
-            industry=financial_data.get("industry"),
-            price=price_data["price"],
-            market_cap=financial_data["market_cap"],
-            total_debt=financial_data["total_debt"],
-            cash=financial_data["cash"],
-            ebit=financial_data["ebit"],
-            net_working_capital=financial_data["net_working_capital"],
-            net_fixed_assets=financial_data["net_fixed_assets"],
-            enterprise_value=enterprise_value,
-            earnings_yield=earnings_yield,
-            return_on_capital=return_on_capital,
-            acquirers_multiple=acquirers_multiple,
-            price_index_6month=price_data["price_index_6month"],
-            price_index_12month=price_data["price_index_12month"],
-            book_to_market=fundamental_data.get("book_to_market"),
-            free_cash_flow_yield=fundamental_data.get("free_cash_flow_yield"),
-            price_to_sales=fundamental_data.get("price_to_sales"),
-            data_timestamp=datetime.now(),
+            price_data=price_data,
+            financial_data=financial_data,
+            fundamental_data=fundamental_data,
+            metrics=metrics,
         )
-
-        ticker_data = assess_data_quality(ticker_data)
-        return ticker_data
-
 
     def _create_error_ticker_data(self, symbol: str, error_msg: str) -> TickerData:
         """Create error ticker data.
@@ -234,6 +181,24 @@ class AsyncYFinanceFetcher(BaseFetcher):
         return TickerData(
             symbol=symbol,
             status=TickerStatus.DATA_UNAVAILABLE,
+            sector=None,
+            industry=None,
+            price=None,
+            market_cap=None,
+            total_debt=None,
+            cash=None,
+            ebit=None,
+            net_working_capital=None,
+            net_fixed_assets=None,
+            enterprise_value=None,
+            earnings_yield=None,
+            return_on_capital=None,
+            acquirers_multiple=None,
+            price_index_6month=None,
+            price_index_12month=None,
+            book_to_market=None,
+            free_cash_flow_yield=None,
+            price_to_sales=None,
             data_timestamp=datetime.now(),
             quality_score=0.0,
         )
@@ -253,7 +218,10 @@ class AsyncYFinanceFetcher(BaseFetcher):
         self,
         symbols: list[str],
     ) -> list[TickerData]:
-        """Fetch multiple tickers concurrently.
+        """Fetch multiple tickers concurrently with batch price fetching.
+
+        Uses batch price fetching to reduce API calls, then fetches fundamentals
+        in parallel for each ticker.
 
         Args:
             symbols: List of ticker symbols.
@@ -261,15 +229,94 @@ class AsyncYFinanceFetcher(BaseFetcher):
         Returns:
             List of TickerData objects.
         """
-        tasks = [self.fetch_ticker_data(symbol) for symbol in symbols]
+        from src.data.fetchers.fetcher_utils import fetch_price_data_batch
+        from src.utils.date_utils import get_last_business_day
+
+        # Batch fetch all price data in one API call (much faster!)
+        logger.info(f"Batch fetching price data for {len(symbols)} symbols...")
+        loop = asyncio.get_event_loop()
+        last_business_day = get_last_business_day()
+        batch_price_data = await loop.run_in_executor(
+            None,
+            fetch_price_data_batch,
+            symbols,
+            last_business_day,
+        )
+
+        # Now fetch fundamentals in parallel (one per ticker) with rate limiting
+        async def fetch_with_price(symbol: str) -> TickerData:
+            """Fetch ticker data using pre-fetched price data with rate limiting."""
+            # Check price data before acquiring semaphore to avoid deadlock
+            price_data = batch_price_data.get(symbol, {})
+            if not price_data or price_data.get("price") is None:
+                # Batch price fetch failed - create error TickerData instead of calling
+                # fetch_ticker_data() which would try to acquire semaphore again (deadlock risk)
+                logger.warning(f"{symbol}: Batch price fetch failed, creating error TickerData")
+                return self._create_error_ticker_data(
+                    symbol,
+                    "Batch price fetch failed - no price data available",
+                )
+
+            async with self._rate_limiter:
+                await self._wait_for_rate_limit()
+
+                # Fetch fundamentals only (price already done)
+                loop = asyncio.get_event_loop()
+                fundamental_data = await loop.run_in_executor(
+                    None,
+                    fetch_fundamental_data_shared,
+                    symbol,
+                )
+
+                financial_data = extract_financial_data_from_yfinance(
+                    fundamental_data,
+                    symbol=symbol,
+                )
+
+                # Use shared calculation function to eliminate duplication
+                metrics = calculate_metrics_from_financial_data(financial_data, symbol)
+                enterprise_value = metrics["enterprise_value"]
+                earnings_yield = metrics["earnings_yield"]
+                return_on_capital = metrics["return_on_capital"]
+                acquirers_multiple = metrics["acquirers_multiple"]
+
+                # Debug logging for missing Magic Formula metrics
+                if earnings_yield is None or return_on_capital is None:
+                    logger.debug(
+                        f"{symbol}: Missing Magic Formula metrics - "
+                        f"EBIT: {financial_data.get('ebit')}, "
+                        f"EV: {enterprise_value}, "
+                        f"NWC: {financial_data.get('net_working_capital')}, "
+                        f"NFA: {financial_data.get('net_fixed_assets')}, "
+                        f"EY: {earnings_yield}, "
+                        f"ROC: {return_on_capital}",
+                    )
+
+                # Use shared function to build TickerData
+                return build_ticker_data(
+                    symbol=symbol,
+                    price_data=price_data,
+                    financial_data=financial_data,
+                    fundamental_data=fundamental_data,
+                    metrics=metrics,
+                )
+
+        # Fetch all fundamentals in parallel
+        tasks = [fetch_with_price(symbol) for symbol in symbols]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         ticker_data_list: list[TickerData] = []
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, TickerData):
                 ticker_data_list.append(result)
             elif isinstance(result, Exception):
-                logger.error(f"Error in async fetch: {result}")
+                # Create error TickerData for failed symbol
+                failed_symbol = symbols[i] if i < len(symbols) else "Unknown"
+                logger.error(f"Error fetching {failed_symbol}: {result}")
+                error_ticker = self._create_error_ticker_data(
+                    failed_symbol,
+                    f"Async fetch error: {result}",
+                )
+                ticker_data_list.append(error_ticker)
 
         return ticker_data_list
-
