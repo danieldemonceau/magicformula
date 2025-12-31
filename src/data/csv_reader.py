@@ -3,7 +3,6 @@
 import csv
 import logging
 from pathlib import Path
-from typing import Any
 
 from src.data.models.ticker_data import TickerData
 from src.data.models.ticker_status import TickerStatus
@@ -35,25 +34,32 @@ class CSVReader:
                 for row in reader:
                     # Try different possible column names
                     ticker = (
-                        row.get("Ticker", "")
-                        or row.get("ticker", "")
-                        or row.get("TICKER", "")
+                        row.get("Ticker", "") or row.get("ticker", "") or row.get("TICKER", "")
                     ).strip()
                     if not ticker:
                         continue
 
                     # Parse market cap (remove quotes and convert millions to actual value)
                     market_cap_str = (
-                        row.get("Market Cap ($ Millions)", "")
-                        or row.get("market cap ($ millions)", "")
-                        or row.get("Market Cap", "")
-                    ).replace('"', "").replace(",", "").strip()
+                        (
+                            row.get("Market Cap ($ Millions)", "")
+                            or row.get("market cap ($ millions)", "")
+                            or row.get("Market Cap", "")
+                        )
+                        .replace('"', "")
+                        .replace(",", "")
+                        .strip()
+                    )
                     market_cap = None
                     if market_cap_str:
                         try:
-                            market_cap = float(market_cap_str) * 1_000_000  # Convert millions to actual
+                            market_cap = (
+                                float(market_cap_str) * 1_000_000
+                            )  # Convert millions to actual
                         except ValueError:
-                            logger.warning(f"{ticker}: Could not parse market cap: {market_cap_str}")
+                            logger.warning(
+                                f"{ticker}: Could not parse market cap: {market_cap_str}"
+                            )
 
                     # Get company name if available
                     company_name = (
@@ -65,12 +71,32 @@ class CSVReader:
                     ticker_data = TickerData(
                         symbol=ticker,
                         status=TickerStatus.ACTIVE,
+                        sector=None,
+                        industry=None,
+                        price=None,
                         market_cap=market_cap,
-                        # Note: CSV doesn't have all fields, so we'll need to fetch missing data
+                        total_debt=None,
+                        cash=None,
+                        ebit=None,
+                        net_working_capital=None,
+                        net_fixed_assets=None,
+                        enterprise_value=None,
+                        earnings_yield=None,
+                        return_on_capital=None,
+                        acquirers_multiple=None,
+                        price_index_6month=None,
+                        price_index_12month=None,
+                        book_to_market=None,
+                        free_cash_flow_yield=None,
+                        price_to_sales=None,
+                        data_timestamp=None,
+                        quality_score=None,
                     )
                     ticker_data_list.append(ticker_data)
 
-            logger.info(f"Loaded {len(ticker_data_list)} tickers from Magic Formula CSV: {csv_path}")
+            logger.info(
+                f"Loaded {len(ticker_data_list)} tickers from Magic Formula CSV: {csv_path}"
+            )
             return ticker_data_list
 
         except FileNotFoundError:
@@ -100,9 +126,7 @@ class CSVReader:
                 reader = csv.DictReader(f)
                 for row in reader:
                     ticker = (
-                        row.get("Ticker", "")
-                        or row.get("ticker", "")
-                        or row.get("TICKER", "")
+                        row.get("Ticker", "") or row.get("ticker", "") or row.get("TICKER", "")
                     ).strip()
                     if not ticker:
                         continue
@@ -110,10 +134,11 @@ class CSVReader:
                     # Parse fields from CSV (try different column name variations)
                     price = None
                     price_str = (
-                        row.get("Price ($)", "")
-                        or row.get("Price", "")
-                        or row.get("price", "")
-                    ).replace('"', "").replace(",", "").strip()
+                        (row.get("Price ($)", "") or row.get("Price", "") or row.get("price", ""))
+                        .replace('"', "")
+                        .replace(",", "")
+                        .strip()
+                    )
                     if price_str:
                         try:
                             price = float(price_str)
@@ -122,35 +147,54 @@ class CSVReader:
 
                     market_cap = None
                     market_cap_str = (
-                        row.get("Mkt Cap ($M)", "")
-                        or row.get("Mkt Cap", "")
-                        or row.get("Market Cap", "")
-                    ).replace('"', "").replace(",", "").strip()
+                        (
+                            row.get("Mkt Cap ($M)", "")
+                            or row.get("Mkt Cap", "")
+                            or row.get("Market Cap", "")
+                        )
+                        .replace('"', "")
+                        .replace(",", "")
+                        .strip()
+                    )
                     if market_cap_str:
                         try:
-                            market_cap = float(market_cap_str) * 1_000_000  # Convert millions to actual
+                            market_cap = (
+                                float(market_cap_str) * 1_000_000
+                            )  # Convert millions to actual
                         except ValueError:
                             pass
 
                     enterprise_value = None
                     ev_str = (
-                        row.get("EV ($M)", "")
-                        or row.get("EV", "")
-                        or row.get("Enterprise Value", "")
-                    ).replace('"', "").replace(",", "").strip()
+                        (
+                            row.get("EV ($M)", "")
+                            or row.get("EV", "")
+                            or row.get("Enterprise Value", "")
+                        )
+                        .replace('"', "")
+                        .replace(",", "")
+                        .strip()
+                    )
                     if ev_str:
                         try:
-                            enterprise_value = float(ev_str) * 1_000_000  # Convert millions to actual
+                            enterprise_value = (
+                                float(ev_str) * 1_000_000
+                            )  # Convert millions to actual
                         except ValueError:
                             pass
 
                     # OI = Operating Income = EBIT
                     ebit = None
                     oi_str = (
-                        row.get("OI ($M)", "")
-                        or row.get("OI", "")
-                        or row.get("Operating Income", "")
-                    ).replace('"', "").replace(",", "").strip()
+                        (
+                            row.get("OI ($M)", "")
+                            or row.get("OI", "")
+                            or row.get("Operating Income", "")
+                        )
+                        .replace('"', "")
+                        .replace(",", "")
+                        .strip()
+                    )
                     if oi_str:
                         try:
                             ebit = float(oi_str) * 1_000_000  # Convert millions to actual
@@ -158,23 +202,37 @@ class CSVReader:
                             pass
 
                     # Get industry
-                    industry = (
-                        row.get("Industry", "")
-                        or row.get("industry", "")
-                    ).strip()
+                    industry = (row.get("Industry", "") or row.get("industry", "")).strip()
 
                     ticker_data = TickerData(
                         symbol=ticker,
                         status=TickerStatus.ACTIVE,
+                        sector=None,
+                        industry=industry if industry else None,
                         price=price,
                         market_cap=market_cap,
-                        enterprise_value=enterprise_value,
+                        total_debt=None,
+                        cash=None,
                         ebit=ebit,
-                        industry=industry,
+                        net_working_capital=None,
+                        net_fixed_assets=None,
+                        enterprise_value=enterprise_value,
+                        earnings_yield=None,
+                        return_on_capital=None,
+                        acquirers_multiple=None,
+                        price_index_6month=None,
+                        price_index_12month=None,
+                        book_to_market=None,
+                        free_cash_flow_yield=None,
+                        price_to_sales=None,
+                        data_timestamp=None,
+                        quality_score=None,
                     )
                     ticker_data_list.append(ticker_data)
 
-            logger.info(f"Loaded {len(ticker_data_list)} tickers from Acquirer's Multiple CSV: {csv_path}")
+            logger.info(
+                f"Loaded {len(ticker_data_list)} tickers from Acquirer's Multiple CSV: {csv_path}"
+            )
             return ticker_data_list
 
         except FileNotFoundError:
@@ -224,4 +282,3 @@ class CSVReader:
             return CSVReader.read_acquirers_multiple_csv(csv_path)
         else:
             return CSVReader.read_magic_formula_csv(csv_path)
-

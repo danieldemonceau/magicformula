@@ -7,12 +7,14 @@ import json
 import logging
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings_pydantic import settings
+from src.calculations.exceptions import InvalidDataError, MissingDataError
 from src.calculations.financial_metrics import (
     calculate_acquirers_multiple,
     calculate_earnings_yield,
@@ -23,6 +25,7 @@ from src.data.csv_reader import CSVReader
 from src.data.fetchers.async_fetcher import AsyncYFinanceFetcher
 from src.data.fetchers.yfinance_fetcher import YFinanceFetcher
 from src.data.models.ticker_data import TickerData
+from src.data.models.ticker_status import TickerStatus
 from src.data.quality import assess_data_quality
 from src.output.csv_writer import CSVWriter
 from src.output.json_writer import JSONWriter
@@ -44,9 +47,10 @@ def load_symbols(symbols_file: Path) -> list[str]:
         List of ticker symbols.
     """
     try:
-        with open(symbols_file, encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("symbols", [])
+        with Path(symbols_file).open(encoding="utf-8") as f:
+            data: dict[str, list[str]] = json.load(f)
+            symbols: list[str] = data.get("symbols", [])
+            return symbols
     except FileNotFoundError:
         logger.error(f"Symbols file not found: {symbols_file}")
         sys.exit(1)
@@ -55,9 +59,10 @@ def load_symbols(symbols_file: Path) -> list[str]:
         sys.exit(1)
 
 
-def get_strategy(strategy_name: str, **kwargs) -> (
-    MagicFormulaStrategy | AcquirersMultipleStrategy | DCAStrategy
-):
+def get_strategy(
+    strategy_name: str,
+    **kwargs: str | int | float | bool | date | None,
+) -> MagicFormulaStrategy | AcquirersMultipleStrategy | DCAStrategy:
     """Factory function to get strategy instance.
 
     Args:
@@ -75,7 +80,7 @@ def get_strategy(strategy_name: str, **kwargs) -> (
     if strategy_name == settings.strategy_acquirers_multiple:
         return AcquirersMultipleStrategy()
     if strategy_name == settings.strategy_dca:
-        return DCAStrategy(**kwargs)
+        return DCAStrategy(**kwargs)  # type: ignore[arg-type]
 
     raise ValueError(f"Unsupported strategy: {strategy_name}")
 
@@ -172,7 +177,14 @@ Examples:
         "--async",
         action="store_true",
         dest="use_async",
-        help="Use async fetching for better performance",
+        default=True,  # Make async the default - much faster
+        help="Use async fetching for better performance (default: True)",
+    )
+    parser.add_argument(
+        "--no-async",
+        action="store_false",
+        dest="use_async",
+        help="Disable async fetching (use sequential fetching)",
     )
 
     parser.add_argument(
@@ -253,53 +265,97 @@ Examples:
 
         # Fetch missing data from yfinance to complete the dataset
         logger.info("Fetching missing data from yfinance to complete calculations...")
+        symbols_to_fetch = [td.symbol for td in ticker_data]
         if args.use_async:
-            fetcher = AsyncYFinanceFetcher(
+            fetcher_csv_async: AsyncYFinanceFetcher = AsyncYFinanceFetcher(
                 max_concurrent=args.max_concurrent,
                 requests_per_second=args.requests_per_second,
                 use_cache=not args.no_cache,
             )
-            symbols_to_fetch = [td.symbol for td in ticker_data]
-            fetched_data = asyncio.run(fetcher.fetch_multiple_tickers_async(symbols_to_fetch))
+            fetched_data = asyncio.run(
+                fetcher_csv_async.fetch_multiple_tickers_async(symbols_to_fetch)
+            )
         else:
-            fetcher = YFinanceFetcher(
+            fetcher_csv_sync: YFinanceFetcher = YFinanceFetcher(
                 sleep_time=args.sleep_time,
                 use_cache=not args.no_cache,
             )
-            symbols_to_fetch = [td.symbol for td in ticker_data]
-            fetched_data = fetcher.fetch_multiple_tickers(symbols_to_fetch)
+            fetched_data = fetcher_csv_sync.fetch_multiple_tickers(symbols_to_fetch)
 
         # Merge CSV data with fetched data (CSV data takes precedence for fields it has)
-        fetched_lookup = {td.symbol: td for td in fetched_data}
+        fetched_lookup = {td.symbol.upper(): td for td in fetched_data}
         merged_ticker_data = []
         for csv_ticker in ticker_data:
-            fetched_ticker = fetched_lookup.get(csv_ticker.symbol)
+            fetched_ticker = fetched_lookup.get(csv_ticker.symbol.upper())
             if fetched_ticker:
+                # Check if fetched ticker has any useful data (not all None)
+                has_useful_fetched_data = any(
+                    [
+                        fetched_ticker.price is not None,
+                        fetched_ticker.ebit is not None,
+                        fetched_ticker.total_debt is not None,
+                        fetched_ticker.cash is not None,
+                        fetched_ticker.net_working_capital is not None,
+                        fetched_ticker.net_fixed_assets is not None,
+                        fetched_ticker.sector,
+                        fetched_ticker.industry,
+                    ]
+                )
+
                 # Merge: use CSV values where available, otherwise use fetched values
                 merged = csv_ticker.model_copy(deep=True)
-                # Fill in missing fields from fetched data
-                if merged.market_cap is None:
+                # Fill in missing fields from fetched data (only if fetched has data)
+                if merged.market_cap is None and fetched_ticker.market_cap is not None:
                     merged.market_cap = fetched_ticker.market_cap
-                if merged.price is None:
+                if merged.price is None and fetched_ticker.price is not None:
                     merged.price = fetched_ticker.price
-                if merged.ebit is None:
+                if merged.ebit is None and fetched_ticker.ebit is not None:
                     merged.ebit = fetched_ticker.ebit
-                if merged.enterprise_value is None:
+                if merged.enterprise_value is None and fetched_ticker.enterprise_value is not None:
                     merged.enterprise_value = fetched_ticker.enterprise_value
-                if merged.net_working_capital is None:
+                if (
+                    merged.net_working_capital is None
+                    and fetched_ticker.net_working_capital is not None
+                ):
                     merged.net_working_capital = fetched_ticker.net_working_capital
-                if merged.net_fixed_assets is None:
+                if merged.net_fixed_assets is None and fetched_ticker.net_fixed_assets is not None:
                     merged.net_fixed_assets = fetched_ticker.net_fixed_assets
-                if merged.total_debt is None:
+                if merged.total_debt is None and fetched_ticker.total_debt is not None:
                     merged.total_debt = fetched_ticker.total_debt
-                if merged.cash is None:
+                if merged.cash is None and fetched_ticker.cash is not None:
                     merged.cash = fetched_ticker.cash
-                if not merged.sector:
+                if not merged.sector and fetched_ticker.sector:
                     merged.sector = fetched_ticker.sector
-                if not merged.industry:
+                if not merged.industry and fetched_ticker.industry:
                     merged.industry = fetched_ticker.industry
+
+                # Only update status if fetched data has useful information
+                # If fetched data is all None, keep CSV status (likely ACTIVE)
+                if has_useful_fetched_data:
+                    if fetched_ticker.status == TickerStatus.DELISTED and (
+                        merged.price is None and not merged.market_cap
+                    ):
+                        merged.status = TickerStatus.DELISTED
+                    elif fetched_ticker.status in (
+                        TickerStatus.DATA_UNAVAILABLE,
+                        TickerStatus.STALE,
+                    ):
+                        # Only set to DATA_UNAVAILABLE if we actually tried to fetch and got nothing
+                        # If CSV has market_cap, keep it as ACTIVE for now (assess_data_quality will update if needed)
+                        if merged.market_cap or merged.ebit:
+                            # We have financial data from CSV, so keep ACTIVE status
+                            # assess_data_quality will update it appropriately
+                            pass
+                        else:
+                            merged.status = fetched_ticker.status
+                # If fetched data is all None, keep CSV status (don't overwrite with DATA_UNAVAILABLE)
                 merged_ticker_data.append(merged)
             else:
+                # No fetched data - keep CSV data but don't mark as DELISTED if we have financial data
+                if csv_ticker.market_cap or csv_ticker.ebit:
+                    csv_ticker = csv_ticker.model_copy(
+                        update={"status": TickerStatus.DATA_UNAVAILABLE}
+                    )
                 merged_ticker_data.append(csv_ticker)
 
         ticker_data = merged_ticker_data
@@ -313,26 +369,25 @@ Examples:
         # Choose fetcher based on async flag
         if args.use_async:
             logger.info("Using async fetcher for improved performance")
-            fetcher = AsyncYFinanceFetcher(
+            fetcher_file_async: AsyncYFinanceFetcher = AsyncYFinanceFetcher(
                 max_concurrent=args.max_concurrent,
                 requests_per_second=args.requests_per_second,
                 use_cache=not args.no_cache,
             )
             logger.info(f"Fetching data for {len(symbols)} symbols (async)...")
-            ticker_data = asyncio.run(fetcher.fetch_multiple_tickers_async(symbols))
+            ticker_data = asyncio.run(fetcher_file_async.fetch_multiple_tickers_async(symbols))
         else:
-            fetcher = YFinanceFetcher(
+            fetcher_file_sync: YFinanceFetcher = YFinanceFetcher(
                 sleep_time=args.sleep_time,
                 use_cache=not args.no_cache,
             )
             logger.info(f"Fetching data for {len(symbols)} symbols...")
-            ticker_data = fetcher.fetch_multiple_tickers(symbols)
+            ticker_data = fetcher_file_sync.fetch_multiple_tickers(symbols)
 
     logger.info(f"Successfully prepared data for {len(ticker_data)} tickers")
 
     # Log status breakdown
     from collections import Counter
-    from src.data.models.ticker_status import TickerStatus
 
     status_counts = Counter(td.status for td in ticker_data)
     logger.info(f"Ticker status breakdown: {dict(status_counts)}")
@@ -374,28 +429,30 @@ Examples:
                     ticker_dict["enterprise_value"],
                 )
             except Exception:
-                pass
+                pass  # Skip if calculation fails
 
         # Calculate return_on_capital if we have EBIT and capital components
-        if ticker_dict.get("ebit") and not ticker_dict.get("return_on_capital"):
-            if (
+        if (
+            ticker_dict.get("ebit")
+            and not ticker_dict.get("return_on_capital")
+            and (
                 ticker_dict.get("net_working_capital") is not None
                 or ticker_dict.get("net_fixed_assets") is not None
-            ):
-                try:
-                    ticker_dict["return_on_capital"] = calculate_return_on_capital(
-                        ticker_dict["ebit"],
-                        ticker_dict.get("net_working_capital") or 0.0,
-                        ticker_dict.get("net_fixed_assets") or 0.0,
-                    )
-                except (MissingDataError, InvalidDataError, ValueError) as e:
-                    # InvalidDataError means capital_employed <= 0 (negative NWC or NFA)
-                    # This is expected for some companies, so we just skip ROC calculation
-                    logger.debug(
-                        f"{ticker_dict.get('symbol', 'Unknown')}: "
-                        f"Could not calculate return_on_capital: {e}",
-                    )
-                    pass
+            )
+        ):
+            try:
+                ticker_dict["return_on_capital"] = calculate_return_on_capital(
+                    ticker_dict["ebit"],
+                    ticker_dict.get("net_working_capital") or 0.0,
+                    ticker_dict.get("net_fixed_assets") or 0.0,
+                )
+            except (MissingDataError, InvalidDataError, ValueError) as e:
+                # InvalidDataError means capital_employed <= 0 (negative NWC or NFA)
+                # This is expected for some companies, so we just skip ROC calculation
+                logger.debug(
+                    f"{ticker_dict.get('symbol', 'Unknown')}: "
+                    f"Could not calculate return_on_capital: {e}",
+                )
 
         # Calculate acquirers_multiple if we have EBIT and EV
         if (
@@ -409,7 +466,7 @@ Examples:
                     ticker_dict["enterprise_value"],
                 )
             except Exception:
-                pass
+                pass  # Skip if calculation fails
 
         # Recreate TickerData with updated values
         updated_ticker = TickerData(**ticker_dict)
@@ -432,8 +489,8 @@ Examples:
             output_path = args.csv_input.parent / f"{input_stem}_with_results.csv"
 
         logger.info(f"Merging calculated results with CSV: {args.csv_input} -> {output_path}")
-        writer = CSVWriter(output_path)
-        writer.merge_with_csv(args.csv_input, output_path, results)
+        writer_csv: CSVWriter = CSVWriter(output_path)
+        writer_csv.merge_with_csv(args.csv_input, output_path, results)
     else:
         # Original behavior: write to new file
         if not args.output:
@@ -442,7 +499,7 @@ Examples:
         else:
             output_path = args.output
 
-        writer = get_writer(output_path, args.output_format)
+        writer: CSVWriter | JSONWriter = get_writer(output_path, args.output_format)
         writer.write(results)
 
     time_end = time.time()
@@ -456,4 +513,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-
