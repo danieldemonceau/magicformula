@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     strategy_acquirers_multiple: str = "acquirers_multiple"
     strategy_dca: str = "dca"
 
-    # Async fetcher settings
-    async_max_concurrent: int = 5
-    async_requests_per_second: float = 2.0
+    # Async fetcher settings (conservative defaults to avoid API throttling)
+    async_max_concurrent: int = 10
+    async_requests_per_second: float = 5.0
     async_retry_attempts: int = 3
     async_retry_delay: float = 1.0
 
