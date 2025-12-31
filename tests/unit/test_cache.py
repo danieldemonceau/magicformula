@@ -54,4 +54,3 @@ class TestTickerCache:
         cache.clear_all()
         assert cache.get("AAPL") is None
         assert cache.get("MSFT") is None
-

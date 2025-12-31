@@ -147,4 +147,3 @@ class TestAcquirersMultiple:
         """Test Acquirer's Multiple with negative EBIT."""
         with pytest.raises(InvalidDataError):
             calculate_acquirers_multiple(ebit=-100_000_000, enterprise_value=1_000_000_000)
-

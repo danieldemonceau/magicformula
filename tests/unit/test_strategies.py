@@ -1,7 +1,5 @@
 """Unit tests for investment strategies."""
 
-import pytest
-
 from src.data.models.ticker_data import TickerData
 from src.strategies.acquirers_multiple import AcquirersMultipleStrategy
 from src.strategies.magic_formula import MagicFormulaStrategy
@@ -80,4 +78,3 @@ class TestAcquirersMultipleStrategy:
         """Test strategy name."""
         strategy = AcquirersMultipleStrategy()
         assert strategy.get_strategy_name() == "Acquirer's Multiple"
-

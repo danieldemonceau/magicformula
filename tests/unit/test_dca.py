@@ -1,9 +1,6 @@
 """Unit tests for DCA strategy."""
 
-from datetime import date, timedelta
-
-import pandas as pd
-import pytest
+from datetime import date
 
 from src.data.models.ticker_data import TickerData
 from src.strategies.dca import DCAStrategy
@@ -128,4 +125,3 @@ class TestDCASimulationEdgeCases:
         )
         # Should skip holidays (yfinance handles this)
         # This is tested indirectly through integration tests
-

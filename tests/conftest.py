@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import pytest
+
 from src.data.models.ticker_data import TickerData
 
 
@@ -82,4 +83,3 @@ def invalid_ticker_data() -> TickerData:
         earnings_yield=None,
         return_on_capital=None,
     )
-

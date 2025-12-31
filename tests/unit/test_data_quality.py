@@ -2,8 +2,6 @@
 
 from datetime import datetime, timedelta
 
-import pytest
-
 from src.data.models.ticker_data import TickerData
 from src.data.models.ticker_status import TickerStatus
 from src.data.quality import (
@@ -139,4 +137,3 @@ class TestAssessDataQuality:
         ticker = TickerData(symbol="TEST", price=100.0)
         result = assess_data_quality(ticker)
         assert result.data_timestamp is not None
-

@@ -34,4 +34,3 @@ class TestEndToEnd:
         assert len(results) > 0
         assert all("symbol" in r for r in results)
         assert all("acquirers_multiple_rank" in r for r in results)
-

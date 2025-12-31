@@ -34,4 +34,3 @@ class TestYFinanceFetcher:
 
         assert ticker_data.symbol == "INVALIDTICKER123"
         assert ticker_data.price is None or ticker_data.price == 0
-

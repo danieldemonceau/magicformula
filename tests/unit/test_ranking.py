@@ -77,4 +77,3 @@ class TestCalculateCombinedRank:
         result = calculate_combined_rank(data, ["rank1", "rank2"], "combined")
         assert result[0]["combined"] == 1
         assert result[1]["combined"] == 2
-
