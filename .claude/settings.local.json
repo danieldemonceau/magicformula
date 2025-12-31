@@ -4,7 +4,13 @@
       "Bash(dir:*)",
       "Bash(tree:*)",
       "Bash(powershell:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python scripts/run_analysis.py:*)",
+      "Bash(python:*)",
+      "Bash(cat:*)",
+      "Bash(findstr:*)",
+      "Bash(del \"c:\\\\dev\\\\magicformula\\\\config\\\\settings.py\")"
     ]
   }
 }
