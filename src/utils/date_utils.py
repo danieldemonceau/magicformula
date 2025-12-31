@@ -1,6 +1,7 @@
 """Date utility functions for business day calculations."""
 
 from datetime import date, timedelta
+
 from dateutil.relativedelta import relativedelta
 
 
@@ -40,5 +41,5 @@ def get_business_day_months_ago(months: int, target_date: date | None = None) ->
 
     while months_ago.weekday() > 4:
         months_ago -= timedelta(days=1)
-    return months_ago
-
+    result: date = months_ago
+    return result

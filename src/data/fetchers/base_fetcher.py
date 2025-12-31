@@ -1,6 +1,7 @@
 """Abstract base class for data fetchers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Coroutine
 
 from src.data.models.ticker_data import TickerData
 
@@ -9,14 +10,14 @@ class BaseFetcher(ABC):
     """Abstract base class for fetching financial data."""
 
     @abstractmethod
-    def fetch_ticker_data(self, symbol: str) -> TickerData:
+    def fetch_ticker_data(self, symbol: str) -> TickerData | Coroutine[None, None, TickerData]:
         """Fetch financial data for a single ticker.
 
         Args:
             symbol: Stock ticker symbol.
 
         Returns:
-            TickerData object with financial metrics.
+            TickerData object with financial metrics (or Coroutine for async implementations).
 
         Raises:
             DataFetchError: If data cannot be fetched.
@@ -34,4 +35,3 @@ class BaseFetcher(ABC):
             List of TickerData objects.
         """
         pass
-

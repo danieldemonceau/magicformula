@@ -5,7 +5,6 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from config.settings_pydantic import settings
 from src.data.models.ticker_data import TickerData
@@ -154,4 +153,3 @@ class TickerCache:
 
         except Exception as e:
             logger.error(f"Error clearing all cache: {e}")
-
