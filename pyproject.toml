@@ -31,6 +31,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -46,8 +48,13 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "E402",  # module level import not at top of file (needed for sys.path.insert)
+    "PTH123", # open() vs Path.open() - style preference, both work
+    "SIM105", # try/except/pass vs contextlib.suppress - both acceptable
     "B008",  # do not perform function calls in argument defaults
     "ARG001", # unused function argument (for interface methods)
+    "ARG002", # unused method argument (error_msg kept for future use)
+    "F841",  # unused local variable (in tests - kept for documentation)
 ]
 
 [tool.ruff.format]
@@ -71,6 +78,9 @@ strict_equality = true
 module = [
     "yfinance.*",
     "finviz.*",
+    "pandas.*",
+    "dateutil.*",
+    "pydantic_settings.*",
 ]
 ignore_missing_imports = true
 
