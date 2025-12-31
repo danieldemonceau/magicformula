@@ -52,10 +52,33 @@ class MagicFormulaStrategy(BaseStrategy):
                         reasons.append(f"financial sector ({ticker.sector})")
                     if ticker.earnings_yield is None:
                         reasons.append("missing earnings_yield")
+                        # Log why earnings_yield is missing
+                        if ticker.ebit is None:
+                            reasons.append("(EBIT is None)")
+                        elif ticker.enterprise_value is None:
+                            reasons.append("(enterprise_value is None)")
+                        elif ticker.ebit <= 0:
+                            reasons.append(f"(EBIT <= 0: {ticker.ebit})")
+                        elif ticker.enterprise_value <= 0:
+                            reasons.append(f"(enterprise_value <= 0: {ticker.enterprise_value})")
                     elif ticker.earnings_yield <= 0:
                         reasons.append(f"earnings_yield <= 0 ({ticker.earnings_yield:.4f})")
                     if ticker.return_on_capital is None:
                         reasons.append("missing return_on_capital")
+                        # Log why return_on_capital is missing
+                        if ticker.ebit is None:
+                            reasons.append("(EBIT is None)")
+                        elif ticker.net_working_capital is None and ticker.net_fixed_assets is None:
+                            reasons.append("(both NWC and NFA are None)")
+                        elif (
+                            ticker.net_working_capital is not None
+                            and ticker.net_fixed_assets is not None
+                            and (ticker.net_working_capital + ticker.net_fixed_assets) <= 0
+                        ):
+                            reasons.append(
+                                f"(capital_employed <= 0: NWC={ticker.net_working_capital}, "
+                                f"NFA={ticker.net_fixed_assets})"
+                            )
                     elif ticker.return_on_capital <= 0:
                         reasons.append(f"return_on_capital <= 0 ({ticker.return_on_capital:.4f})")
                     if ticker.quality_score is not None and ticker.quality_score < 0.5:
@@ -74,11 +97,41 @@ class MagicFormulaStrategy(BaseStrategy):
                     rejection_summary.items(), key=lambda x: x[1], reverse=True
                 ):
                     logger.info(f"  {count} ticker(s): {reason}")
+            else:
+                # Check all tickers, not just ACTIVE ones
+                logger.info("Analyzing all tickers for rejection reasons:")
+                for ticker in ticker_data[:5]:  # Show first 5 as examples
+                    reasons = []
+                    if ticker.status != TickerStatus.ACTIVE:
+                        reasons.append(f"status={ticker.status}")
+                    if is_financial_sector(ticker):
+                        reasons.append(f"financial sector ({ticker.sector})")
+                    if ticker.earnings_yield is None:
+                        reasons.append("missing earnings_yield")
+                    elif ticker.earnings_yield <= 0:
+                        reasons.append(f"earnings_yield <= 0 ({ticker.earnings_yield:.4f})")
+                    if ticker.return_on_capital is None:
+                        reasons.append("missing return_on_capital")
+                    elif ticker.return_on_capital <= 0:
+                        reasons.append(f"return_on_capital <= 0 ({ticker.return_on_capital:.4f})")
+                    if ticker.quality_score is not None and ticker.quality_score < 0.5:
+                        reasons.append(f"low quality_score ({ticker.quality_score:.2f})")
+                    logger.info(
+                        f"  {ticker.symbol}: {', '.join(reasons) if reasons else 'no reasons found (check validation logic)'}"
+                    )
 
             # Return ALL tickers (even invalid ones) so CSV output includes all data
             # Invalid tickers will have None ranks/scores but still show calculated metrics
             logger.info("Returning all tickers with calculated metrics (including invalid ones)")
-            return [ticker.to_dict() for ticker in ticker_data]
+            # Ensure all tickers have magic_formula_score field (None for invalid ones)
+            results = []
+            for ticker in ticker_data:
+                ticker_dict = ticker.to_dict()
+                ticker_dict["magic_formula_score"] = None
+                ticker_dict["earnings_yield_rank"] = None
+                ticker_dict["return_on_capital_rank"] = None
+                results.append(ticker_dict)
+            return results
 
         # Calculate ranks only for valid tickers
         data = [ticker.to_dict() for ticker in valid_tickers]

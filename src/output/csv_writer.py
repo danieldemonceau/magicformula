@@ -39,7 +39,15 @@ class CSVWriter:
         mode = "a" if self.append else "w"
         file_exists = self.output_path.exists() and self.append
 
-        with open(self.output_path, mode, newline="", encoding="utf-8") as output_file:
+        try:
+            output_file = self.output_path.open(mode=mode, newline="", encoding="utf-8")
+        except PermissionError:
+            raise PermissionError(
+                f"Cannot write to {self.output_path}. "
+                "File may be open in another program. Please close it and try again."
+            ) from None
+
+        with output_file:
             dict_writer = csv.DictWriter(output_file, keys)
             if not file_exists:
                 dict_writer.writeheader()
@@ -75,7 +83,15 @@ class CSVWriter:
 
         # Read existing CSV
         existing_rows: list[StrategyResultDict] = []
-        with open(input_path, encoding="utf-8") as f:
+        try:
+            f = input_path.open(encoding="utf-8")
+        except PermissionError:
+            raise PermissionError(
+                f"Cannot read from {input_path}. "
+                "File may be open in another program. Please close it and try again."
+            ) from None
+
+        with f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames or []
             existing_rows = list(reader)
@@ -108,7 +124,15 @@ class CSVWriter:
         # Write merged data to NEW output file
         if merged_rows:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w", newline="", encoding="utf-8") as f:
+            try:
+                f = output_path.open("w", newline="", encoding="utf-8")
+            except PermissionError:
+                raise PermissionError(
+                    f"Cannot write to {output_path}. "
+                    "File may be open in another program. Please close it and try again."
+                ) from None
+
+            with f:
                 all_fieldnames = list(fieldnames)
                 # Add new calculated columns that aren't already in fieldnames
                 for item in data:

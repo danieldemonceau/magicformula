@@ -10,7 +10,12 @@
       "Bash(python:*)",
       "Bash(cat:*)",
       "Bash(findstr:*)",
-      "Bash(del \"c:\\\\dev\\\\magicformula\\\\config\\\\settings.py\")"
+      "Bash(del \"c:\\\\dev\\\\magicformula\\\\config\\\\settings.py\")",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(git -C /c/dev/magicformula log --oneline -20)",
+      "Bash(git -C /c/dev/magicformula diff indicators_get.py)",
+      "Bash(git -C /c/dev/magicformula status --short)"
     ]
   }
 }

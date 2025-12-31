@@ -328,6 +328,29 @@ Examples:
                     merged.sector = fetched_ticker.sector
                 if not merged.industry and fetched_ticker.industry:
                     merged.industry = fetched_ticker.industry
+                # Merge calculated metrics from fetched data
+                if (
+                    merged.price_index_6month is None
+                    and fetched_ticker.price_index_6month is not None
+                ):
+                    merged.price_index_6month = fetched_ticker.price_index_6month
+                if (
+                    merged.price_index_12month is None
+                    and fetched_ticker.price_index_12month is not None
+                ):
+                    merged.price_index_12month = fetched_ticker.price_index_12month
+                if merged.book_to_market is None and fetched_ticker.book_to_market is not None:
+                    merged.book_to_market = fetched_ticker.book_to_market
+                if (
+                    merged.free_cash_flow_yield is None
+                    and fetched_ticker.free_cash_flow_yield is not None
+                ):
+                    merged.free_cash_flow_yield = fetched_ticker.free_cash_flow_yield
+                if merged.price_to_sales is None and fetched_ticker.price_to_sales is not None:
+                    merged.price_to_sales = fetched_ticker.price_to_sales
+                # Preserve timestamp from fetched data (it's fresh)
+                if merged.data_timestamp is None and fetched_ticker.data_timestamp is not None:
+                    merged.data_timestamp = fetched_ticker.data_timestamp
 
                 # Only update status if fetched data has useful information
                 # If fetched data is all None, keep CSV status (likely ACTIVE)
@@ -405,6 +428,18 @@ Examples:
 
     # Calculate missing metrics for tickers that have base data but missing calculated metrics
     updated_ticker_data = []
+    # Log summary of what data we have
+    logger.debug("Data availability summary before calculations:")
+    sample_ticker = ticker_data[0] if ticker_data else None
+    if sample_ticker:
+        logger.debug(
+            f"Sample ticker {sample_ticker.symbol}: "
+            f"market_cap={sample_ticker.market_cap is not None}, "
+            f"ebit={sample_ticker.ebit is not None}, "
+            f"enterprise_value={sample_ticker.enterprise_value is not None}, "
+            f"nwc={sample_ticker.net_working_capital is not None}, "
+            f"nfa={sample_ticker.net_fixed_assets is not None}"
+        )
     for ticker in ticker_data:
         # Create a copy to modify (Pydantic models are immutable)
         ticker_dict = ticker.model_dump()
@@ -428,8 +463,11 @@ Examples:
                     ticker_dict["ebit"],
                     ticker_dict["enterprise_value"],
                 )
-            except Exception:
-                pass  # Skip if calculation fails
+            except Exception as e:
+                logger.debug(
+                    f"{ticker_dict.get('symbol', 'Unknown')}: "
+                    f"Could not calculate earnings_yield: {e}"
+                )
 
         # Calculate return_on_capital if we have EBIT and capital components
         if (
@@ -453,6 +491,17 @@ Examples:
                     f"{ticker_dict.get('symbol', 'Unknown')}: "
                     f"Could not calculate return_on_capital: {e}",
                 )
+        elif (
+            ticker_dict.get("ebit")
+            and not ticker_dict.get("return_on_capital")
+            and ticker_dict.get("net_working_capital") is None
+            and ticker_dict.get("net_fixed_assets") is None
+        ):
+            # Log why ROC can't be calculated
+            logger.debug(
+                f"{ticker_dict.get('symbol', 'Unknown')}: "
+                "Cannot calculate return_on_capital: missing net_working_capital and net_fixed_assets"
+            )
 
         # Calculate acquirers_multiple if we have EBIT and EV
         if (
@@ -489,8 +538,15 @@ Examples:
             output_path = args.csv_input.parent / f"{input_stem}_with_results.csv"
 
         logger.info(f"Merging calculated results with CSV: {args.csv_input} -> {output_path}")
-        writer_csv: CSVWriter = CSVWriter(output_path)
-        writer_csv.merge_with_csv(args.csv_input, output_path, results)
+        try:
+            writer_csv: CSVWriter = CSVWriter(output_path)
+            writer_csv.merge_with_csv(args.csv_input, output_path, results)
+        except PermissionError:
+            logger.error(
+                f"Permission denied: Cannot write to {output_path}. "
+                "Please close the file if it's open in another program (e.g., Excel) and try again."
+            )
+            sys.exit(1)
     else:
         # Original behavior: write to new file
         if not args.output:
@@ -499,8 +555,15 @@ Examples:
         else:
             output_path = args.output
 
-        writer: CSVWriter | JSONWriter = get_writer(output_path, args.output_format)
-        writer.write(results)
+        try:
+            writer: CSVWriter | JSONWriter = get_writer(output_path, args.output_format)
+            writer.write(results)
+        except PermissionError:
+            logger.error(
+                f"Permission denied: Cannot write to {output_path}. "
+                "Please close the file if it's open in another program (e.g., Excel) and try again."
+            )
+            sys.exit(1)
 
     time_end = time.time()
     duration = time_end - time_start

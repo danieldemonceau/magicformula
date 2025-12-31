@@ -109,7 +109,15 @@ def check_staleness(ticker_data: TickerData) -> bool:
         True if data is stale, False otherwise.
     """
     if ticker_data.data_timestamp is None:
-        return True
+        # If timestamp is None but we have financial data, assume it's fresh (just fetched)
+        # This handles CSV input where timestamp might not be set initially
+        has_financial_data = (
+            ticker_data.market_cap is not None
+            or ticker_data.ebit is not None
+            or ticker_data.enterprise_value is not None
+        )
+        # Return True (stale) if no timestamp AND no financial data
+        return not has_financial_data
 
     age = datetime.now() - ticker_data.data_timestamp
     is_stale = age > timedelta(days=STALENESS_THRESHOLD_DAYS)
@@ -195,9 +203,10 @@ def assess_data_quality(ticker_data: TickerData) -> TickerData:
     elif len(outliers) > 2:
         ticker_data.status = TickerStatus.DATA_UNAVAILABLE
 
-    ticker_data.quality_score = calculate_quality_score(ticker_data)
-
+    # Set timestamp BEFORE calculating quality score (so staleness check uses it)
     if ticker_data.data_timestamp is None:
         ticker_data.data_timestamp = datetime.now()
+
+    ticker_data.quality_score = calculate_quality_score(ticker_data)
 
     return ticker_data
