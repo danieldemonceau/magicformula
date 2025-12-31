@@ -1,6 +1,6 @@
 """Data validation utilities."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from src.data.models.ticker_data import TickerData
 from src.data.models.ticker_status import TickerStatus
@@ -29,9 +29,7 @@ def is_financial_sector(ticker_data: TickerData) -> bool:
         return False
 
     sector_upper = ticker_data.sector.upper()
-    return any(
-        excluded.upper() in sector_upper for excluded in EXCLUDED_SECTORS
-    )
+    return any(excluded.upper() in sector_upper for excluded in EXCLUDED_SECTORS)
 
 
 def validate_ticker_data_for_magic_formula(ticker_data: TickerData) -> bool:
@@ -55,10 +53,7 @@ def validate_ticker_data_for_magic_formula(ticker_data: TickerData) -> bool:
     if ticker_data.return_on_capital is None or ticker_data.return_on_capital <= 0:
         return False
 
-    if ticker_data.quality_score is not None and ticker_data.quality_score < 0.5:
-        return False
-
-    return True
+    return not (ticker_data.quality_score is not None and ticker_data.quality_score < 0.5)
 
 
 def validate_ticker_data_for_acquirers_multiple(ticker_data: TickerData) -> bool:
@@ -79,10 +74,7 @@ def validate_ticker_data_for_acquirers_multiple(ticker_data: TickerData) -> bool
     if ticker_data.acquirers_multiple is None or ticker_data.acquirers_multiple <= 0:
         return False
 
-    if ticker_data.quality_score is not None and ticker_data.quality_score < 0.5:
-        return False
-
-    return True
+    return not (ticker_data.quality_score is not None and ticker_data.quality_score < 0.5)
 
 
 def filter_valid_tickers(

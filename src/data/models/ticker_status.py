@@ -11,4 +11,3 @@ class TickerStatus(str, Enum):
     DATA_UNAVAILABLE = "DATA_UNAVAILABLE"
     DELISTED = "DELISTED"
     STALE = "STALE"
-

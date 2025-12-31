@@ -45,14 +45,18 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         and ticker_data.price_to_sales > OUTLIER_THRESHOLDS["price_to_sales"]
     ):
         outliers.append("price_to_sales")
-        logger.warning(f"{ticker_data.symbol}: Suspicious P/S ratio: {ticker_data.price_to_sales:.2f}")
+        logger.warning(
+            f"{ticker_data.symbol}: Suspicious P/S ratio: {ticker_data.price_to_sales:.2f}"
+        )
 
     if (
         ticker_data.earnings_yield is not None
         and ticker_data.earnings_yield > OUTLIER_THRESHOLDS["earnings_yield"]
     ):
         outliers.append("earnings_yield")
-        logger.warning(f"{ticker_data.symbol}: Suspicious Earnings Yield: {ticker_data.earnings_yield:.2%}")
+        logger.warning(
+            f"{ticker_data.symbol}: Suspicious Earnings Yield: {ticker_data.earnings_yield:.2%}"
+        )
 
     if (
         ticker_data.return_on_capital is not None
@@ -66,26 +70,29 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         and ticker_data.acquirers_multiple > OUTLIER_THRESHOLDS["acquirers_multiple"]
     ):
         outliers.append("acquirers_multiple")
-        logger.warning(f"{ticker_data.symbol}: Suspicious Acquirer's Multiple: {ticker_data.acquirers_multiple:.2f}")
+        logger.warning(
+            f"{ticker_data.symbol}: Suspicious Acquirer's Multiple: {ticker_data.acquirers_multiple:.2f}"
+        )
 
     if (
         ticker_data.market_cap is not None
         and ticker_data.market_cap > OUTLIER_THRESHOLDS["market_cap"]
     ):
         outliers.append("market_cap")
-        logger.warning(f"{ticker_data.symbol}: Suspicious Market Cap: ${ticker_data.market_cap:,.0f}")
+        logger.warning(
+            f"{ticker_data.symbol}: Suspicious Market Cap: ${ticker_data.market_cap:,.0f}"
+        )
 
     if (
         ticker_data.enterprise_value is not None
         and ticker_data.enterprise_value > OUTLIER_THRESHOLDS["enterprise_value"]
     ):
         outliers.append("enterprise_value")
-        logger.warning(f"{ticker_data.symbol}: Suspicious Enterprise Value: ${ticker_data.enterprise_value:,.0f}")
+        logger.warning(
+            f"{ticker_data.symbol}: Suspicious Enterprise Value: ${ticker_data.enterprise_value:,.0f}"
+        )
 
-    if (
-        ticker_data.price is not None
-        and ticker_data.price > OUTLIER_THRESHOLDS["price"]
-    ):
+    if ticker_data.price is not None and ticker_data.price > OUTLIER_THRESHOLDS["price"]:
         outliers.append("price")
         logger.warning(f"{ticker_data.symbol}: Suspicious Price: ${ticker_data.price:,.2f}")
 
@@ -134,9 +141,7 @@ def calculate_quality_score(ticker_data: TickerData) -> float:
         "net_working_capital",
         "net_fixed_assets",
     ]
-    missing_critical = sum(
-        1 for field in critical_fields if getattr(ticker_data, field) is None
-    )
+    missing_critical = sum(1 for field in critical_fields if getattr(ticker_data, field) is None)
     score -= missing_critical * 0.2
 
     outliers = detect_outliers(ticker_data)
@@ -163,8 +168,28 @@ def assess_data_quality(ticker_data: TickerData) -> TickerData:
     outliers = detect_outliers(ticker_data)
     is_stale = check_staleness(ticker_data)
 
-    if ticker_data.price is None or ticker_data.price <= 0:
-        ticker_data.status = TickerStatus.DELISTED
+    # Only mark as DELISTED if price is missing AND we have no other financial data
+    # This prevents marking CSV-sourced tickers as DELISTED when they have valid market_cap/EBIT
+    has_financial_data = (
+        ticker_data.market_cap is not None
+        or ticker_data.ebit is not None
+        or ticker_data.enterprise_value is not None
+    )
+
+    if (ticker_data.price is None or ticker_data.price <= 0) and not has_financial_data:
+        # Only mark as DELISTED if we have no financial data at all
+        if ticker_data.status == TickerStatus.ACTIVE:
+            ticker_data.status = TickerStatus.DATA_UNAVAILABLE
+        else:
+            ticker_data.status = TickerStatus.DELISTED
+    elif (ticker_data.price is None or ticker_data.price <= 0) and has_financial_data:
+        # We have financial data but no price - this is OK for CSV input
+        # Don't change status from ACTIVE to DATA_UNAVAILABLE just because price is missing
+        # Price is not required for Magic Formula/Acquirer's Multiple calculations
+        # Only change status if it's already something other than ACTIVE
+        if ticker_data.status not in (TickerStatus.ACTIVE, TickerStatus.DATA_UNAVAILABLE):
+            # Only update if status indicates a real problem (DELISTED, STALE, etc.)
+            pass
     elif is_stale:
         ticker_data.status = TickerStatus.STALE
     elif len(outliers) > 2:
@@ -176,4 +201,3 @@ def assess_data_quality(ticker_data: TickerData) -> TickerData:
         ticker_data.data_timestamp = datetime.now()
 
     return ticker_data
-
