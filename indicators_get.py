@@ -12,6 +12,7 @@ import finviz
 import json
 import csv
 from operator import itemgetter
+import yfinance as yf
 
 headers = [
     "Symbol",
@@ -30,25 +31,15 @@ headers = [
 
 
 def quotes_get(symbols, period_name, source_name):
-    # Get configs
-    load_dotenv()
-    av_apikey = os.getenv("AV_APIKEY")
     quote_data = []
-
-    # This is because of the limitation of 5 requests / minute, thus 12 seconds wait between API Calls
-    time_sleep = 5
-    # print("\t".join(headers))
+    time_sleep = 1
 
     print("--- ---")
     print("--- QUOTE EXTRACTION -- START ---")
     print("--- ---")
 
-    shouldContinue = True
-
     for symbol in symbols:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&apikey={av_apikey}"
         print(f"--- PROCESSING {symbol} -- START ---")
-        print(f"--- PROCESSING {url} -- START ---")
         count = 0
 
         quote_price = 0.0
@@ -60,185 +51,93 @@ def quotes_get(symbols, period_name, source_name):
         quote_ey_12months = 0.0
         quote_roa = 0.0
 
-        if not shouldContinue:
-            break
-        while count < 3:
-            try:
-                count += 1
-                response = requests.get(url)
-                quote = response.json()
-                if "Error Message" in quote:
-                    quote_price = 0.0
-                    quote_price_index_6month = 0.0
-                    quote_price_index_12month = 0.0
-                    print("error message in quote", quote["Error Message"])
-                    break
-                elif "Meta Data" in quote:
-                    ###################################################
-                    # Get last price
-                    weekday_last = date.today()
-                    weekday_last -= timedelta(days=1)
-                    while weekday_last.weekday() > 4:  # Mon-Fri are 0-4
-                        weekday_last -= timedelta(days=1)
+        ticker = yf.Ticker(symbol)
+        today = date.today()
+        weekday_last = today - timedelta(days=1)
+        while weekday_last.weekday() > 4:
+            weekday_last -= timedelta(days=1)
+        weekday_minus_6months = weekday_last + relativedelta(months=-6)
+        while weekday_minus_6months.weekday() > 4:
+            weekday_minus_6months -= timedelta(days=1)
+        weekday_minus_12months = weekday_last + relativedelta(months=-12)
+        while weekday_minus_12months.weekday() > 4:
+            weekday_minus_12months -= timedelta(days=1)
 
-                    weekday_last_year = f"{weekday_last.year:02}"
-                    weekday_last_month = f"{weekday_last.month:02}"
-                    weekday_last_day = f"{weekday_last.day:02}"
-                    # weekday_last_year = "2022"
-                    # weekday_last_month = "10"
-                    # weekday_last_day = "28"
-                    if (
-                        f"{weekday_last_year}-{weekday_last_month}-{weekday_last_day}"
-                        in quote[f"Time Series (Daily)"]
-                    ):
-                        quote_price = float(
-                            quote[f"Time Series (Daily)"][
-                                f"{weekday_last_year}-{weekday_last_month}-{weekday_last_day}"
-                            ][f"4. close"]
-                        )
-                    else:
-                        quote_price = -1.0
-                    weekday_minus_6months = weekday_last
-                    weekday_minus_6months = weekday_minus_6months + relativedelta(
-                        months=-6
-                    )
-                    while weekday_minus_6months.weekday() > 4:  # Mon-Fri are 0-4
-                        weekday_minus_6months -= timedelta(days=1)
+        try:
+            hist = ticker.history(
+                start=weekday_minus_12months.strftime("%Y-%m-%d"),
+                end=(weekday_last + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+            last_price_row = hist.loc[hist.index.date == weekday_last]
+            if not last_price_row.empty:
+                quote_price = float(last_price_row["Close"].iloc[0])
+            else:
+                quote_price = -1.0
+            price_6m_row = hist.loc[hist.index.date == weekday_minus_6months]
+            if not price_6m_row.empty:
+                quote_price_6months = float(price_6m_row["Close"].iloc[0])
+            else:
+                quote_price_6months = -1.0
+            price_12m_row = hist.loc[hist.index.date == weekday_minus_12months]
+            if not price_12m_row.empty:
+                quote_price_12months = float(price_12m_row["Close"].iloc[0])
+            else:
+                quote_price_12months = float(hist["Close"].iloc[0])
+            quote_price_index_6month = (
+                float(quote_price) / float(quote_price_6months)
+                if quote_price_6months > 0
+                else 0
+            )
+            quote_price_index_12month = (
+                float(quote_price) / float(quote_price_12months)
+                if quote_price_12months > 0
+                else 0
+            )
+        except Exception as e:
+            print(f"Error fetching price data for {symbol}: {e}")
+            quote_price = 0.0
+            quote_price_index_6month = 0.0
+            quote_price_index_12month = 0.0
 
-                    ###################################################
-                    # Get Price momentum 6 months
-                    weekday_minus_6months_year = f"{weekday_minus_6months.year:02}"
-                    weekday_minus_6months_month = f"{weekday_minus_6months.month:02}"
-                    weekday_minus_6months_day = f"{weekday_minus_6months.day:02}"
-
-                    if (
-                        f"{weekday_minus_6months_year}-{weekday_minus_6months_month}-{weekday_minus_6months_day}"
-                        in quote[f"Time Series (Daily)"]
-                    ):
-                        quote_price_6months = quote[f"Time Series (Daily)"][
-                            f"{weekday_minus_6months_year}-{weekday_minus_6months_month}-{weekday_minus_6months_day}"
-                        ][f"4. close"]
-                    else:
-                        quote_price_6months = -1.0
-                    weekday_minus_12months = weekday_last
-                    weekday_minus_12months = weekday_minus_12months + relativedelta(
-                        months=-12
-                    )
-                    while weekday_minus_12months.weekday() > 4:  # Mon-Fri are 0-4
-                        weekday_minus_12months -= timedelta(days=1)
-
-                    ###################################################
-                    # Get Price momentum 12 months
-                    weekday_minus_12months_year = f"{weekday_minus_12months.year:02}"
-                    weekday_minus_12months_month = f"{weekday_minus_12months.month:02}"
-                    weekday_minus_12months_day = f"{weekday_minus_12months.day:02}"
-
-                    if (
-                        f"{weekday_minus_12months_year}-{weekday_minus_12months_month}-{weekday_minus_12months_day}"
-                        in quote[f"Time Series (Daily)"]
-                    ):
-                        quote_price_12months = quote[f"Time Series (Daily)"][
-                            f"{weekday_minus_12months_year}-{weekday_minus_12months_month}-{weekday_minus_12months_day}"
-                        ][f"4. close"]
-                    else:
-                        quote_price_12months = -1
-
-                    # Calculated Price Momentum/Index
-                    quote_price_index_6month = float(quote_price) / float(
-                        quote_price_6months
-                    )
-                    if quote_price_index_6month < 0:
-                        quote_price_index_6month = 0
-                    quote_price_index_12month = float(quote_price) / float(
-                        quote_price_12months
-                    )
-                    if quote_price_index_12month < 0:
-                        quote_price_index_12month = 0
-                    break
-                elif "Information" in quote:
-                    if (
-                        quote["Information"]
-                        == "Thank you for using Alpha Vantage! You have reached the 100 requests/day limit for your free API key. Please subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to instantly remove all daily rate limits."
-                    ):
-                        print("--- Alpha Vantage Daily limit reached ---")
-                        print(f"--- Trying again in {time_sleep} seconds")
-                        time.sleep(time_sleep)
-                        break
-                elif "Note" in quote:
-                    if (
-                        quote["Note"]
-                        == "Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute and 100 calls per day. Please visit https://www.alphavantage.co/premium/ if you would like to target a higher API call frequency."
-                    ):
-                        print("--- Alpha Vantage Daily limit reached ---")
-                        print(f"--- Trying again in {time_sleep} seconds")
-                        time.sleep(time_sleep)
-                        break
-            except requests.exceptions.HTTPError as err:
-                quote_price = 0.0
-                quote_price_index_6month = 0.0
-                quote_price_index_12month = 0.0
-                print("error", err)
-                print(f"--- Trying again in {time_sleep} seconds")
-                time.sleep(time_sleep)
-                break
-            except:
-                print("--- Failed to decode JSON")
-                print("--- This is the returned result")
-                print(response)
-                print(f"--- Trying again in {time_sleep} seconds")
-                time.sleep(time_sleep)
-
-        ###################################################
-        # Get Finviz data
-        # quote = json.dumps(finviz.get_stock(f'{symbol}'), indent=4, sort_keys=True)
-
-        while True:
-            try:
-                quote = finviz.get_stock(f"{symbol}")
-                # Get Book to Market
-                quote_bm = 0.0
-                if "P/B" in quote:
-                    quote_raw_pb = quote["P/B"]
-                    if not quote_raw_pb == "-":
-                        quote_bm = 1.0 / float(quote_raw_pb)
-
-                # Get Free Cash Flow Yield 12 months
+        try:
+            info = ticker.info
+            quote_bm = (
+                1.0 / float(info["priceToBook"])
+                if info.get("priceToBook") and info["priceToBook"] > 0
+                else 0.0
+            )
+            if (
+                info.get("freeCashflow")
+                and info.get("marketCap")
+                and info["marketCap"] > 0
+            ):
+                quote_fcfy_12months = float(info["freeCashflow"]) / float(
+                    info["marketCap"]
+                )
+            else:
                 quote_fcfy_12months = 0.0
-                if "P/FCF" in quote:
-                    quote_pfcf = quote["P/FCF"]
-                    if not quote_pfcf == "-":
-                        quote_fcfy_12months = 1.0 / float(quote_pfcf)
-
-                # Get P/S
-                quote_ps = 0.0
-                if "P/S" in quote:
-                    quote_raw_ps = quote["P/S"]
-                    if not quote_raw_ps == "-":
-                        quote_ps = float(quote_raw_ps)
-
-                # Get Earning Yield 12 months
-                quote_ey_12months = 0.0
-                if "P/E" in quote:
-                    quote_raw_pe = quote["P/E"]
-                    if not quote_raw_pe == "-":
-                        quote_ey_12months = 1.0 / float(quote_raw_pe)
-
-                # Get Return On Asset
-                quote_roa = 0.0
-                if "ROA" in quote:
-                    quote_raw_roa = quote["ROA"]
-                    if not quote_raw_roa == "-":
-                        quote_roa = float(quote_raw_roa[:-1])
-
-                break
-
-            except requests.exceptions.HTTPError as err:
-                quote_bm = 0.0
-                quote_ey_12months = 0.0
-                quote_roa = 0.0
-                quote_fcfy_12months = 0.0
-                quote_ps = 0.0
-                break
+            quote_ps = (
+                float(info["priceToSalesTrailing12Months"])
+                if info.get("priceToSalesTrailing12Months")
+                else 0.0
+            )
+            quote_ey_12months = (
+                1.0 / float(info["trailingPE"])
+                if info.get("trailingPE") and info["trailingPE"] > 0
+                else 0.0
+            )
+            quote_roa = (
+                float(info["returnOnAssets"]) * 100
+                if info.get("returnOnAssets")
+                else 0.0
+            )
+        except Exception as e:
+            print(f"Error fetching fundamentals for {symbol}: {e}")
+            quote_bm = 0.0
+            quote_fcfy_12months = 0.0
+            quote_ps = 0.0
+            quote_ey_12months = 0.0
+            quote_roa = 0.0
 
         quote_data.append(
             {
@@ -250,17 +149,10 @@ def quotes_get(symbols, period_name, source_name):
                 "Free Cash Flow Yield (12months)": quote_fcfy_12months,
                 "Price/Sales": quote_ps,
                 "Earnings Yield (12months)": quote_ey_12months,
-                "ROA": quote_roa
-                # "Earnings Yield (12months) rank": ,
-                # "ROA rank": ,
-                # "Magic Formula Score": ,
+                "ROA": quote_roa,
             }
         )
-
-        # print(str("\t".join([str(i) for i in list(quote_data[-1].values())])))
-
         print(f"--- PROCESSING {symbol} -- END ---")
-
         if not symbol == symbols[-1]:
             time.sleep(time_sleep)
 
@@ -268,7 +160,6 @@ def quotes_get(symbols, period_name, source_name):
     print("--- ---")
     print("--- QUOTE EXTRACTION -- END ---")
     print("--- ---")
-    # Rank based on Earnings Yield (12months)
     print("--- Rank based on Earnings Yield (12months) -- START ---")
     quote_data = sorted(
         quote_data, key=itemgetter("Earnings Yield (12months)"), reverse=True
@@ -278,14 +169,12 @@ def quotes_get(symbols, period_name, source_name):
 
     print("--- Rank based on Earnings Yield (12months) -- END ---")
 
-    # Rank based on ROA
     print("--- Rank based on ROA -- START ---")
     quote_data = sorted(quote_data, key=itemgetter("ROA"), reverse=True)
     for idx, quote_data_item in enumerate(quote_data):
         quote_data[idx]["ROA rank"] = idx + 1
     print("--- Rank based on ROA -- END ---")
 
-    # Calculate the Magic Formula score and Rank based on this score
     print(
         "--- Calculate the Magic Formula score and Rank based on this score -- START ---"
     )
@@ -307,11 +196,6 @@ def quotes_get(symbols, period_name, source_name):
         dict_writer.writeheader()
         dict_writer.writerows(quote_data)
     print("--- Writing to csv -- END ---")
-
-
-# for idx, quote_data_item in enumerate(quote_data):
-#     print(headers)
-#     print(quote_data_item)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(tree:*)",
+      "Bash(powershell:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}
