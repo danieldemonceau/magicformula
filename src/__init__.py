@@ -5,4 +5,3 @@ Acquirer's Multiple, and Dollar Cost Averaging strategies.
 """
 
 __version__ = "1.0.0"
-

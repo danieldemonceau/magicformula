@@ -1,2 +1,1 @@
 """Financial calculations and metrics."""
-
