@@ -802,17 +802,54 @@ def merge_csv_results(
         except (ValueError, TypeError):
             return False
 
-    # First pass: Validate MF components and clear invalid scores
+    # First pass: Validate MF and AM components, clear invalid scores
+    mf_valid_count = 0
+    am_valid_count = 0
+
     for merged_row_data in merged_rows:
+        symbol = merged_row_data.get(symbol_column, "Unknown")
+
+        # =====================================================================
+        # MAGIC FORMULA VALIDATION
+        # Requires: earnings_yield AND return_on_capital (both must be valid)
+        # =====================================================================
         ey = merged_row_data.get("earnings_yield")
         roc = merged_row_data.get("return_on_capital")
 
-        # MF score requires BOTH earnings_yield AND return_on_capital to be valid
-        if not is_valid_numeric(ey) or not is_valid_numeric(roc):
+        mf_valid = is_valid_numeric(ey) and is_valid_numeric(roc)
+
+        if not mf_valid:
             # Clear MF score and ranks - they're invalid
             merged_row_data["magic_formula_score"] = None
             merged_row_data["earnings_yield_rank"] = None
             merged_row_data["return_on_capital_rank"] = None
+        else:
+            mf_valid_count += 1
+
+        # =====================================================================
+        # ACQUIRER'S MULTIPLE VALIDATION
+        # Requires: acquirers_multiple (which needs ebit and enterprise_value)
+        # =====================================================================
+        am = merged_row_data.get("acquirers_multiple")
+        ebit = merged_row_data.get("ebit")
+        ev = merged_row_data.get("enterprise_value")
+
+        # AM is valid only if acquirers_multiple is a valid number
+        # AND the underlying components (ebit, ev) exist
+        am_valid = is_valid_numeric(am) and is_valid_numeric(ebit) and is_valid_numeric(ev)
+
+        if not am_valid:
+            # Clear AM rank - it's invalid
+            merged_row_data["acquirers_multiple_rank"] = None
+            # Also clear acquirers_multiple if it's NaN
+            if not is_valid_numeric(am):
+                merged_row_data["acquirers_multiple"] = None
+        else:
+            am_valid_count += 1
+
+    logger.info(
+        f"Validation complete: {mf_valid_count} tickers valid for MF, {am_valid_count} valid for AM"
+    )
 
     # Helper to get valid numeric value or None
     def get_valid_float(val: Any) -> float | None:
