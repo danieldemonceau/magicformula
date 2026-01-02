@@ -115,7 +115,7 @@ def merge_csv_results(
     mf_rows: list[dict[str, str]] = []
     mf_fieldnames: list[str] = []
     if magic_formula_csv.exists():
-        with magic_formula_csv.open(encoding="utf-8") as f:
+        with magic_formula_csv.open(encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             mf_fieldnames = list(reader.fieldnames or [])
             mf_rows = list(reader)
@@ -128,7 +128,7 @@ def merge_csv_results(
     am_rows: list[dict[str, str]] = []
     am_fieldnames: list[str] = []
     if acquirers_multiple_csv.exists():
-        with acquirers_multiple_csv.open(encoding="utf-8") as f:
+        with acquirers_multiple_csv.open(encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             am_fieldnames = list(reader.fieldnames or [])
             am_rows = list(reader)
@@ -407,81 +407,59 @@ def merge_csv_results(
     merged_rows: list[dict[str, Any]] = []
     all_fieldnames_set: set[str] = set()
 
-    # Define preferred column order (user-friendly)
+    # Define preferred column order (user-requested order)
     preferred_order = [
-        # INVESTMENT DECISION COLUMNS (most important - at the top)
+        # TOP INVESTMENT DECISION COLUMNS
         "top_pick",
+        symbol_column,
         "composite_rank",
         "composite_score",
-        # Basic identification
-        symbol_column,
-        "Company Name (in alphabetical order)",
-        "Name",
-        "company_name",
+        "magic_formula_score",
+        "acquirers_multiple",
+        "price_index_6month",
+        # Company identification (consolidated)
         "name",
-        # Company info
         "sector",
-        "Sector",
         "industry",
-        "Industry",
-        # Market data
-        "market_cap",
-        "Market Cap ($ Millions)",
-        "Mkt Cap ($M)",
-        "Market Cap",
-        "Price From",
-        "price_from",
-        "Most Recent Quarter Data",
-        "most_recent_quarter_data",
-        "price",
-        "Price ($)",
-        "Price",
-        # Magic Formula metrics
+        # Core metrics
         "earnings_yield",
         "return_on_capital",
-        # Magic Formula ranks
         "earnings_yield_rank",
         "return_on_capital_rank",
-        # Magic Formula score
-        "magic_formula_score",
-        # Acquirer's Multiple
-        "acquirers_multiple",
-        "Acquirer's Multiple®",
         "acquirers_multiple_rank",
-        # Core financial metrics
+        # Market data
+        "market_cap",
+        "price",
+        "price_from",
+        # Financial metrics
         "enterprise_value",
-        "EV ($M)",
-        "Enterprise Value",
         "ebit",
-        "OI ($M)",
-        "Operating Income",
         "total_debt",
-        "Total Debt",
         "cash",
-        "Cash",
-        # Working capital and assets
         "net_working_capital",
-        "Net Working Capital",
         "net_fixed_assets",
-        "Net Fixed Assets",
         # Additional metrics
         "book_to_market",
-        "Book to Market",
         "free_cash_flow_yield",
-        "FCF Yield (%)",
         "price_to_sales",
-        "Price to Sales",
-        "price_index_6month",
         "price_index_12month",
+        # AM-specific metrics (calculated for all)
+        "debt_to_equity",
+        "dividend_yield",
+        "roa",
+        "price_change_pct",
+        "shareholder_yield",
+        "buyback_yield",
         # Quality and status
         "quality_score",
-        "Quality Score",
         "status",
-        "Status",
-        # Timestamps
         "data_timestamp",
-        "Data Timestamp",
     ]
+
+    # Fields to consolidate (map various names to canonical name)
+    name_fields = ["Name", "Company Name (in alphabetical order)", "company_name"]
+    industry_fields = ["Industry"]
+    sector_fields = ["Sector"]
 
     # Collect all fieldnames from all sources
     for result in mf_results:
@@ -573,10 +551,235 @@ def merge_csv_results(
         # Ensure symbol is set
         merged_row[symbol_column] = symbol
 
+        # =====================================================================
+        # CONSOLIDATE DUPLICATE FIELDS
+        # =====================================================================
+        # Helper to get first non-empty value from multiple fields/sources
+        def get_consolidated_value(
+            field_names: list[str], sources: list[dict[str, str]]
+        ) -> str | None:
+            for field in field_names:
+                for source in sources:
+                    val = source.get(field)
+                    if (
+                        val
+                        and str(val).strip()
+                        and str(val).strip().lower() not in ("none", "null", "")
+                    ):
+                        return str(val).strip()
+            return None
+
+        # Consolidate name fields into single "name" field
+        # Check original inputs FIRST (they have the actual names)
+        consolidated_name = get_consolidated_value(
+            ["Company Name (in alphabetical order)", "Name", "company_name", "name"],
+            [mf_input, am_input, merged_row],
+        )
+        if consolidated_name:
+            merged_row["name"] = consolidated_name
+
+        # Consolidate industry fields into single "industry" field
+        consolidated_industry = get_consolidated_value(
+            ["Industry", "industry"],
+            [mf_input, am_input, merged_row],
+        )
+        if consolidated_industry:
+            merged_row["industry"] = consolidated_industry
+
+        # Consolidate sector fields into single "sector" field
+        consolidated_sector = get_consolidated_value(
+            ["Sector", "sector"],
+            [mf_input, am_input, merged_row],
+        )
+        if consolidated_sector:
+            merged_row["sector"] = consolidated_sector
+
+        # Consolidate price_from field
+        price_from = None
+        for pf_field in ["Price From", "price_from", "data_timestamp"]:
+            for source in [am_input, mf_input, merged_row]:
+                if pf_field in source:
+                    val = source.get(pf_field)
+                    if (
+                        val
+                        and str(val).strip()
+                        and str(val).strip().lower() not in ("none", "null")
+                    ):
+                        price_from = str(val).strip()
+                        break
+            if price_from:
+                break
+        if price_from:
+            merged_row["price_from"] = price_from
+
+        # =====================================================================
+        # CALCULATE AM-SPECIFIC METRICS FOR ALL TICKERS
+        # =====================================================================
+        # Get ticker data for calculations
+        ticker_data = fetched_lookup.get(symbol)
+
+        # Debt:Equity (%) - total_debt / shareholders_equity * 100
+        if "debt_to_equity" not in merged_row or merged_row.get("debt_to_equity") is None:
+            # Try from AM input first
+            am_de = am_input.get("Debt:Equity (%)")
+            if am_de and str(am_de).strip() and str(am_de).strip().lower() not in ("none", "null"):
+                try:
+                    merged_row["debt_to_equity"] = float(am_de)
+                except (ValueError, TypeError):
+                    pass  # Invalid value, skip
+            # Calculate if not from AM
+            if "debt_to_equity" not in merged_row or merged_row.get("debt_to_equity") is None:
+                total_debt = merged_row.get("total_debt")
+                market_cap = merged_row.get("market_cap")
+                if total_debt and market_cap:
+                    try:
+                        # Approximate: use market_cap as proxy if no equity data
+                        merged_row["debt_to_equity"] = round(
+                            float(total_debt) / float(market_cap) * 100, 2
+                        )
+                    except (ValueError, TypeError, ZeroDivisionError):
+                        pass  # Calculation failed
+
+        # Dividend Yield (%)
+        if "dividend_yield" not in merged_row or merged_row.get("dividend_yield") is None:
+            am_div = am_input.get("Div Yield (%)")
+            if (
+                am_div
+                and str(am_div).strip()
+                and str(am_div).strip().lower() not in ("none", "null")
+            ):
+                try:
+                    merged_row["dividend_yield"] = float(am_div)
+                except (ValueError, TypeError):
+                    pass  # Invalid value
+
+        # ROA (%) - from AM input or calculate
+        if "roa" not in merged_row or merged_row.get("roa") is None:
+            am_roa = am_input.get("ROA (5YrAvg %)")
+            if (
+                am_roa
+                and str(am_roa).strip()
+                and str(am_roa).strip().lower() not in ("none", "null")
+            ):
+                try:
+                    merged_row["roa"] = float(am_roa)
+                except (ValueError, TypeError):
+                    pass  # Invalid value
+
+        # Price Change (%) - derive from price_index_6month
+        if "price_change_pct" not in merged_row or merged_row.get("price_change_pct") is None:
+            am_change = am_input.get("Change (%)")
+            if (
+                am_change
+                and str(am_change).strip()
+                and str(am_change).strip().lower() not in ("none", "null")
+            ):
+                try:
+                    merged_row["price_change_pct"] = float(am_change)
+                except (ValueError, TypeError):
+                    pass  # Invalid value
+            # Calculate from price_index_6month if not from AM
+            if "price_change_pct" not in merged_row or merged_row.get("price_change_pct") is None:
+                price_idx = merged_row.get("price_index_6month")
+                if price_idx:
+                    try:
+                        # price_index = current / past, so change = (index - 1) * 100
+                        merged_row["price_change_pct"] = round((float(price_idx) - 1) * 100, 2)
+                    except (ValueError, TypeError):
+                        pass  # Calculation failed
+
+        # Buyback Yield (%)
+        if "buyback_yield" not in merged_row or merged_row.get("buyback_yield") is None:
+            am_bb = am_input.get("BB Yield (%)")
+            if am_bb and str(am_bb).strip() and str(am_bb).strip().lower() not in ("none", "null"):
+                try:
+                    merged_row["buyback_yield"] = float(am_bb)
+                except (ValueError, TypeError):
+                    pass  # Invalid value
+
+        # Shareholder Yield (%)
+        if "shareholder_yield" not in merged_row or merged_row.get("shareholder_yield") is None:
+            am_shy = am_input.get("SHYield (%)")
+            if (
+                am_shy
+                and str(am_shy).strip()
+                and str(am_shy).strip().lower() not in ("none", "null")
+            ):
+                try:
+                    merged_row["shareholder_yield"] = float(am_shy)
+                except (ValueError, TypeError):
+                    pass  # Invalid value
+            # Calculate if we have components
+            if "shareholder_yield" not in merged_row or merged_row.get("shareholder_yield") is None:
+                div_yield = merged_row.get("dividend_yield")
+                bb_yield = merged_row.get("buyback_yield")
+                if div_yield is not None or bb_yield is not None:
+                    try:
+                        merged_row["shareholder_yield"] = round(
+                            (float(div_yield) if div_yield else 0)
+                            + (float(bb_yield) if bb_yield else 0),
+                            2,
+                        )
+                    except (ValueError, TypeError):
+                        pass  # Calculation failed
+
+        # Remove duplicate/redundant fields that have been consolidated
+        fields_to_remove = [
+            "Company Name (in alphabetical order)",
+            "Name",
+            "company_name",
+            "Industry",
+            "Sector",
+            "Price From",
+            "Price ($)",
+            "Mkt Cap ($M)",
+            "Market Cap ($ Millions)",
+            "EV ($M)",
+            "OI ($M)",
+            "FCF Yield (%)",
+            "Acquirer's Multiple®",
+        ]
+        for field in fields_to_remove:
+            if field in merged_row and field not in [symbol_column]:
+                del merged_row[field]
+
         merged_rows.append(merged_row)
 
     # Add any new fields discovered during merging to the fieldnames set
     all_fieldnames_set.update(new_fields)
+
+    # Add calculated AM-specific fields to fieldnames set
+    calculated_fields = {
+        "name",
+        "industry",
+        "sector",
+        "price_from",
+        "debt_to_equity",
+        "dividend_yield",
+        "roa",
+        "price_change_pct",
+        "buyback_yield",
+        "shareholder_yield",
+    }
+    all_fieldnames_set.update(calculated_fields)
+
+    # Remove consolidated duplicate field names from fieldnames set
+    fields_to_remove_from_set = {
+        "Company Name (in alphabetical order)",
+        "Name",
+        "company_name",
+        "Industry",
+        "Sector",
+        "Price From",
+        "Price ($)",
+        "Mkt Cap ($M)",
+        "Market Cap ($ Millions)",
+        "EV ($M)",
+        "OI ($M)",
+        "FCF Yield (%)",
+        "Acquirer's Multiple®",
+    }
+    all_fieldnames_set -= fields_to_remove_from_set
 
     # =========================================================================
     # COMPOSITE SCORING: 50% MF + 30% AM + 20% Momentum (6-month price index)
