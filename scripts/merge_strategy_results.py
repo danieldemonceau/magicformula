@@ -877,23 +877,28 @@ def merge_csv_results(
     # Re-rank based on the validated data in merged_rows.
     # =========================================================================
 
-    # Financial sectors to exclude from ranking
-    EXCLUDED_SECTORS = {
+    # Financial sectors/industries to exclude from ranking
+    EXCLUDED_KEYWORDS = {
         "financial services",
         "financial",
         "banks",
         "insurance",
         "real estate",
         "reit",
+        "finance",  # Catches "Specialty Finance"
+        "capital markets",
+        "asset management",
     }
 
-    def is_excluded_sector(sector: str | None) -> bool:
-        """Check if sector is excluded from ranking."""
-        if not sector:
-            return False
-        return sector.lower() in EXCLUDED_SECTORS or any(
-            excl in sector.lower() for excl in EXCLUDED_SECTORS
-        )
+    def is_excluded_financial(sector: str | None, industry: str | None) -> bool:
+        """Check if sector or industry indicates a financial company."""
+        for field in [sector, industry]:
+            if not field:
+                continue
+            field_lower = field.lower()
+            if any(excl in field_lower for excl in EXCLUDED_KEYWORDS):
+                return True
+        return False
 
     # Re-rank Magic Formula scores
     # Store (idx, ey, roc) tuples for ranking
@@ -902,8 +907,13 @@ def merge_csv_results(
         ey = row.get("earnings_yield")
         roc = row.get("return_on_capital")
         sector = row.get("sector")
+        industry = row.get("industry")
 
-        if is_valid_numeric(ey) and is_valid_numeric(roc) and not is_excluded_sector(sector):
+        if (
+            is_valid_numeric(ey)
+            and is_valid_numeric(roc)
+            and not is_excluded_financial(sector, industry)
+        ):
             # is_valid_numeric ensures these are convertible to float
             ey_f = float(str(ey))
             roc_f = float(str(roc))
@@ -935,8 +945,9 @@ def merge_csv_results(
     for idx, row in enumerate(merged_rows):
         am = row.get("acquirers_multiple")
         sector = row.get("sector")
+        industry = row.get("industry")
 
-        if is_valid_numeric(am) and not is_excluded_sector(sector):
+        if is_valid_numeric(am) and not is_excluded_financial(sector, industry):
             # is_valid_numeric ensures this is convertible to float
             am_f = float(str(am))
             # AM must be positive (EV/EBIT > 0 means positive EBIT)
