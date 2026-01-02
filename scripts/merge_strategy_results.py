@@ -826,10 +826,10 @@ def merge_csv_results(
     am_valid_count = 0
 
     for merged_row_data in merged_rows:
-        symbol = merged_row_data.get(symbol_column, "Unknown")
 
         # =====================================================================
         # MAGIC FORMULA VALIDATION
+        # Requires: earnings_yield AND return_on_capital (both must be valid)
         # Requires: earnings_yield AND return_on_capital (both must be valid)
         # =====================================================================
         ey = merged_row_data.get("earnings_yield")
