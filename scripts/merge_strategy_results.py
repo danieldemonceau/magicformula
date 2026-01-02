@@ -458,7 +458,6 @@ def merge_csv_results(
     ]
 
     # Fields to consolidate (map various names to canonical name)
-    industry_fields = ["Industry"]
 
     # Collect all fieldnames from all sources
     for result in mf_results:
