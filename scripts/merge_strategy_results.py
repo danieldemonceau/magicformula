@@ -872,6 +872,85 @@ def merge_csv_results(
         f"Validation complete: {mf_valid_count} tickers valid for MF, {am_valid_count} valid for AM"
     )
 
+    # =========================================================================
+    # RE-RANK ALL VALID TICKERS
+    # The strategy results may have incomplete ranks due to rate limiting.
+    # Re-rank based on the validated data in merged_rows.
+    # =========================================================================
+
+    # Financial sectors to exclude from ranking
+    EXCLUDED_SECTORS = {
+        "financial services",
+        "financial",
+        "banks",
+        "insurance",
+        "real estate",
+        "reit",
+    }
+
+    def is_excluded_sector(sector: str | None) -> bool:
+        """Check if sector is excluded from ranking."""
+        if not sector:
+            return False
+        return sector.lower() in EXCLUDED_SECTORS or any(
+            excl in sector.lower() for excl in EXCLUDED_SECTORS
+        )
+
+    # Re-rank Magic Formula scores
+    # Store (idx, ey, roc) tuples for ranking
+    mf_rankable: list[tuple[int, float, float]] = []
+    for idx, row in enumerate(merged_rows):
+        ey = row.get("earnings_yield")
+        roc = row.get("return_on_capital")
+        sector = row.get("sector")
+
+        if is_valid_numeric(ey) and is_valid_numeric(roc) and not is_excluded_sector(sector):
+            # is_valid_numeric ensures these are convertible to float
+            ey_f = float(str(ey))
+            roc_f = float(str(roc))
+            # MF requires positive EY and ROC
+            if ey_f > 0 and roc_f > 0:
+                mf_rankable.append((idx, ey_f, roc_f))
+
+    # Rank by EY (higher = better = lower rank)
+    mf_rankable.sort(key=lambda x: -x[1])  # Sort descending by EY
+    ey_ranks = {item[0]: rank + 1 for rank, item in enumerate(mf_rankable)}
+
+    # Rank by ROC (higher = better = lower rank)
+    mf_rankable.sort(key=lambda x: -x[2])  # Sort descending by ROC
+    roc_ranks = {item[0]: rank + 1 for rank, item in enumerate(mf_rankable)}
+
+    # Calculate MF score (sum of ranks) and assign
+    for row_idx, _, _ in mf_rankable:
+        ey_rank = ey_ranks[row_idx]
+        roc_rank = roc_ranks[row_idx]
+        mf_score = ey_rank + roc_rank
+        merged_rows[row_idx]["earnings_yield_rank"] = ey_rank
+        merged_rows[row_idx]["return_on_capital_rank"] = roc_rank
+        merged_rows[row_idx]["magic_formula_score"] = mf_score
+
+    logger.info(f"Re-ranked {len(mf_rankable)} tickers for Magic Formula")
+
+    # Re-rank Acquirer's Multiple
+    am_rankable: list[tuple[int, float]] = []
+    for idx, row in enumerate(merged_rows):
+        am = row.get("acquirers_multiple")
+        sector = row.get("sector")
+
+        if is_valid_numeric(am) and not is_excluded_sector(sector):
+            # is_valid_numeric ensures this is convertible to float
+            am_f = float(str(am))
+            # AM must be positive (EV/EBIT > 0 means positive EBIT)
+            if am_f > 0:
+                am_rankable.append((idx, am_f))
+
+    # Rank by AM (lower = better = lower rank)
+    am_rankable.sort(key=lambda x: x[1])  # Sort ascending by AM
+    for rank, (row_idx, _) in enumerate(am_rankable, start=1):
+        merged_rows[row_idx]["acquirers_multiple_rank"] = rank
+
+    logger.info(f"Re-ranked {len(am_rankable)} tickers for Acquirer's Multiple")
+
     # Helper to get valid numeric value or None
     def get_valid_float(val: Any) -> float | None:
         """Return float if value is valid finite number, else None."""
@@ -1033,6 +1112,31 @@ def merge_csv_results(
     if "_" not in output_path.stem or not any(c.isdigit() for c in output_path.stem.split("_")[-1]):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = output_path.parent / f"{output_path.stem}_{timestamp}{output_path.suffix}"
+
+    # Clean NaN values from all rows - replace with empty string
+    def clean_nan_values(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace NaN, nan, None values with empty string for CSV output."""
+        cleaned = []
+        for row in rows:
+            clean_row = {}
+            for key, val in row.items():
+                # Check if value should be replaced with empty string
+                is_none = val is None
+                is_float_invalid = isinstance(val, float) and (math.isnan(val) or math.isinf(val))
+                is_str_invalid = isinstance(val, str) and val.lower() in (
+                    "nan",
+                    "none",
+                    "inf",
+                    "-inf",
+                )
+                if is_none or is_float_invalid or is_str_invalid:
+                    clean_row[key] = ""
+                else:
+                    clean_row[key] = val
+            cleaned.append(clean_row)
+        return cleaned
+
+    merged_rows = clean_nan_values(merged_rows)
 
     # Write merged CSV
     output_path.parent.mkdir(parents=True, exist_ok=True)
