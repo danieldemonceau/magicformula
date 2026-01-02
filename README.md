@@ -6,64 +6,79 @@ A comprehensive Python tool for analyzing stocks using three proven investment s
 - **Acquirer's Multiple** (Tobias Carlisle): Ranks stocks by EV/EBIT ratio (lower is better)
 - **Dollar Cost Averaging (DCA)**: Simulates periodic investments with dividend reinvestment and slippage
 
-## Features
+## Table of Contents
 
-- ✅ **Corrected Financial Metrics**: Properly implements EBIT/Enterprise Value and Return on Capital
-- ✅ **Modular Architecture**: Clean separation of data fetching, calculations, and reporting
-- ✅ **Strategy Pattern**: Easy to extend with new investment strategies
-- ✅ **Comprehensive Testing**: Unit tests and integration tests included
-- ✅ **Type Safety**: Full type hints with mypy validation
-- ✅ **CLI Interface**: User-friendly command-line interface
-- ✅ **Multiple Output Formats**: CSV and JSON output support
-- ✅ **Error Handling**: Robust error handling for missing data and API failures
-- ✅ **Async Fetching**: High-performance concurrent data fetching with rate limiting
-- ✅ **Data Quality Assessment**: Outlier detection, staleness checks, and quality scoring
-- ✅ **SQLite Caching**: Optional caching layer to reduce API calls
-- ✅ **Ticker Status Tracking**: ACTIVE, INACTIVE, DELISTED, STALE, DATA_UNAVAILABLE statuses
-- ✅ **Pydantic Settings**: Environment-based configuration management
-- ✅ **Explicit Data Filtering**: Automatic exclusion of invalid/None data from rankings
+- [Quick Start](#quick-start)
+- [Quick Setup Guide](#quick-setup-guide)
+- [Installation](#installation)
+  - [Using Conda (Recommended)](#using-conda-recommended)
+  - [Using Pip](#using-pip)
+- [Usage](#usage)
+  - [Command-Line Interface](#command-line-interface)
+  - [Using Makefile](#using-makefile)
+  - [CSV Input Support](#csv-input-support)
+  - [Merging Multiple Strategies](#merging-multiple-strategies)
+- [Financial Metrics Explained](#financial-metrics-explained)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Data Sources](#data-sources)
+- [Data Quality & Performance](#data-quality--performance)
+- [Development](#development)
+- [Limitations & Known Issues](#limitations--known-issues)
+- [References](#references)
 
-## Installation
+## Quick Start
+
+1. **Install dependencies** (see [Quick Setup Guide](#quick-setup-guide) below)
+
+2. **Prepare symbols file** (`data/symbols.json`):
+
+```json
+{
+  "symbols": ["AAPL", "MSFT", "GOOGL", "AMZN"]
+}
+```
+
+3. **Run analysis**:
+
+```bash
+python scripts/run_analysis.py --strategy magic_formula
+```
+
+4. **View results** in `data/outputs/magic_formula_results.csv`
+
+## Quick Setup Guide
 
 ### Using Conda (Recommended)
 
-**Important**: If you have multiple conda installations (e.g., ESRI and Miniconda), configure conda to use your current conda base first:
+**Step 1: Configure conda** (if you have multiple conda installations):
 
 ```bash
-# Setup current conda as primary (keeps ESRI paths for later use)
-# This automatically detects your conda base using: conda info --base
+# Setup current conda as primary (detects conda base automatically)
 make conda-setup-miniconda
-
-# Or manually (replace with your actual conda base path):
-CONDA_BASE=$(conda info --base)
-conda config --prepend envs_dirs "$CONDA_BASE/envs"
 ```
 
-Then create the environment:
+**Step 2: Create environment**:
 
 ```bash
-# Production environment
+# Production
 conda env create -f environment.yml
 conda activate magicformula-env
-# Verify installation (optional)
-pip list | grep yfinance
 
-# Development environment
+# Development
 conda env create -f environment-dev.yml
 conda activate magicformula-env-dev
-# Verify installation (optional)
-pip list | grep yfinance
 ```
 
-**Note**: If `yfinance` or other pip dependencies are missing after creating the conda environment, run:
+**Step 3: Install pip dependencies** (if needed):
 
 ```bash
-pip install -r requirements.txt  # For production
+pip install -r requirements.txt  # Production
 # or
-pip install -r requirements-dev.txt  # For development
+pip install -r requirements-dev.txt  # Development
 ```
 
-**For ESRI Projects**: When working on ESRI projects, switch back with `make conda-setup-esri` (see `CONDA_ENVS_DIRS.md` for details).
+**Note**: For ESRI projects, switch back with `make conda-setup-esri`.
 
 ### Using Pip
 
@@ -77,341 +92,296 @@ pip install -r requirements-dev.txt
 pip install -e ".[dev]"
 ```
 
-**Note**: After installing with `pip install -e .`, the package will be available in your Python path and you can run scripts directly.
+## Installation
 
-## Quick Start
+### Using Conda (Recommended)
 
-1. **Prepare your symbols file** (`data/symbols.json`):
+Conda is recommended for managing Python environments and dependencies. The project includes two environment files:
 
-```json
-{
-  "symbols": ["AAPL", "MSFT", "GOOGL", "AMZN"]
-}
-```
+- `environment.yml` - Production dependencies
+- `environment-dev.yml` - Development dependencies (includes testing, linting, type checking)
 
-2. **Run Magic Formula analysis**:
+**Important**: If you have multiple conda installations (e.g., ESRI and Miniconda), configure conda to use your current conda base first:
 
 ```bash
-python scripts/run_analysis.py --strategy magic_formula
+# Automatically detects and configures your conda base
+make conda-setup-miniconda
+
+# Or manually
+CONDA_BASE=$(conda info --base)
+conda config --prepend envs_dirs "$CONDA_BASE/envs"
 ```
 
-3. **View results** in `data/outputs/magic_formula_results.csv`
+Then create the environment:
+
+```bash
+conda env create -f environment.yml
+conda activate magicformula-env
+```
+
+**Note**: If `yfinance` or other pip dependencies are missing after creating the conda environment, run:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Using Pip
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+After installing with `pip install -e .`, the package is available in your Python path.
 
 ## Usage
 
 ### Command-Line Interface
 
+**Basic usage**:
+
 ```bash
-# Magic Formula (sync mode)
+# Magic Formula
 python scripts/run_analysis.py --strategy magic_formula
 
-# Magic Formula (async mode - faster for large symbol lists)
-python scripts/run_analysis.py --strategy magic_formula --async
+# Acquirer's Multiple
+python scripts/run_analysis.py --strategy acquirers_multiple
 
-# Acquirer's Multiple with custom async settings
-python scripts/run_analysis.py \
-    --strategy acquirers_multiple \
-    --async \
+# DCA with custom parameters
+python scripts/run_analysis.py --strategy dca --dca-amount 1000 --dca-frequency monthly
+```
+
+**Async mode** (faster for large symbol lists):
+
+```bash
+python scripts/run_analysis.py --strategy magic_formula --async \
     --max-concurrent 10 \
     --requests-per-second 3.0
+```
 
-# Dollar Cost Averaging
-python scripts/run_analysis.py --strategy dca --dca-amount 1000 --dca-frequency monthly
+**Custom options**:
 
-# Custom symbols file and output
+```bash
 python scripts/run_analysis.py \
     --strategy magic_formula \
     --symbols-file data/custom_symbols.json \
     --output results.csv \
-    --output-format csv
-
-# Disable caching
-python scripts/run_analysis.py --strategy magic_formula --no-cache
-
-# Verbose logging
-python scripts/run_analysis.py --strategy magic_formula --verbose
+    --output-format csv \
+    --verbose
 ```
 
 ### Using Makefile
 
 ```bash
-# Run Magic Formula analysis
-make run-analysis
-
-# Run Acquirer's Multiple analysis
-make run-acquirers
-
-# Run DCA analysis
-make run-dca
-
-# Run all checks (format, lint, type-check)
-make check
-
-# Auto-fix issues
-make fix
-
-# Run tests
-make test
-
-# Run tests with coverage
-make test-cov
+make run-analysis          # Magic Formula
+make run-acquirers         # Acquirer's Multiple
+make run-dca              # DCA
+make check                # Run all checks (format, lint, type-check)
+make fix                  # Auto-fix issues
+make test                 # Run tests
+make test-cov             # Tests with coverage
 ```
 
-## Project Structure
+### CSV Input Support
 
+The tool supports reading CSV files from Magic Formula and Acquirer's Multiple websites, using that data for calculations, and appending results back to the CSV.
+
+**Magic Formula CSV**:
+
+```bash
+python scripts/run_analysis.py \
+    --strategy magic_formula \
+    --csv-input magic_formula.csv
 ```
-magicformula/
-├── src/
-│   ├── data/
-│   │   ├── fetchers/          # Data fetching (YFinance, etc.)
-│   │   ├── models/            # Pydantic data models
-│   │   └── validators.py      # Data validation
-│   ├── strategies/            # Investment strategies
-│   │   ├── magic_formula.py
-│   │   ├── acquirers_multiple.py
-│   │   └── dca.py
-│   ├── calculations/          # Financial metrics
-│   │   ├── financial_metrics.py
-│   │   └── ranking.py
-│   ├── output/                # Output writers (CSV, JSON)
-│   └── utils/                 # Utilities (logging, dates, decorators)
-├── config/                    # Configuration
-├── scripts/                    # CLI entry point
-├── tests/                     # Test suite
-│   ├── unit/                  # Unit tests
-│   └── integration/           # Integration tests
-├── data/
-│   ├── symbols.json           # Input symbols
-│   └── outputs/               # Generated results
-├── Makefile                   # Build automation
-├── environment.yml             # Conda production environment
-├── environment-dev.yml        # Conda development environment
-└── README.md
+
+**Acquirer's Multiple CSV**:
+
+```bash
+python scripts/run_analysis.py \
+    --strategy acquirers_multiple \
+    --csv-input acquirers_multiple.csv
+```
+
+**Auto-detection**: The script automatically detects CSV type by examining column names. Force type with `--csv-type magic_formula` or `--csv-type acquirers_multiple`.
+
+**What gets added**:
+
+- **Magic Formula**: `earnings_yield`, `earnings_yield_rank`, `return_on_capital`, `return_on_capital_rank`, `magic_formula_score`, `quality_score`
+- **Acquirer's Multiple**: `acquirers_multiple`, `acquirers_multiple_rank`, `quality_score`
+
+**Note**: The original CSV remains untouched. A new output file is created: `{input_filename}_with_results.csv`.
+
+### Merging Multiple Strategies
+
+Run both strategies and merge results into a single CSV:
+
+```bash
+# Using Make (with default paths)
+make run-both-strategies
+
+# Or with custom paths
+make run-both-strategies \
+  MF_CSV=/path/to/magic_formula.csv \
+  AM_CSV=/path/to/acquirers_multiple.csv \
+  MERGED_OUTPUT=/path/to/combined_results.csv
+```
+
+**Manual merge**:
+
+```bash
+# Step 1: Run Magic Formula
+python scripts/run_analysis.py --strategy magic_formula --csv-input mf.csv --output mf_results.csv
+
+# Step 2: Run Acquirer's Multiple
+python scripts/run_analysis.py --strategy acquirers_multiple --csv-input am.csv --output am_results.csv
+
+# Step 3: Merge
+python scripts/merge_strategy_results.py \
+    --magic-formula mf_results.csv \
+    --acquirers-multiple am_results.csv \
+    --output combined_results.csv
 ```
 
 ## Financial Metrics Explained
 
 ### Magic Formula
 
-The Magic Formula ranks stocks by two metrics:
+Ranks stocks by two metrics:
 
-1. **Earnings Yield** = EBIT / Enterprise Value
-
-   - Higher is better
-   - Measures how much earnings a company generates relative to its purchase price
-
-2. **Return on Capital** = EBIT / (Net Working Capital + Net Fixed Assets)
-   - Higher is better
-   - Measures how efficiently a company uses its capital
+1. **Earnings Yield** = EBIT / Enterprise Value (higher is better)
+2. **Return on Capital** = EBIT / (Net Working Capital + Net Fixed Assets) (higher is better)
 
 **Final Score**: Sum of both ranks (lower is better)
 
 ### Acquirer's Multiple
 
-The Acquirer's Multiple ranks stocks by:
-
-- **EV/EBIT Ratio** = Enterprise Value / EBIT
-  - Lower is better
-  - Measures how many years of earnings it would take to pay back the purchase price
+Ranks stocks by **EV/EBIT Ratio** = Enterprise Value / EBIT (lower is better)
 
 ### Dollar Cost Averaging
 
-Simulates periodic investments over time:
+Simulates periodic investments with:
 
 - Configurable investment amount and frequency
 - Dividend reinvestment support
 - Slippage modeling (configurable basis points)
 - Returns total invested, total value, and return percentage
 
+## Project Structure
+
+```
+magicformula/
+├── src/
+│   ├── data/              # Data fetching, models, validation
+│   ├── strategies/        # Investment strategies
+│   ├── calculations/      # Financial metrics
+│   ├── output/            # Output writers (CSV, JSON)
+│   └── utils/             # Utilities
+├── config/                # Configuration
+├── scripts/                # CLI entry points
+├── tests/                  # Test suite
+├── data/                   # Input symbols and outputs
+├── Makefile               # Build automation
+├── environment.yml        # Conda production environment
+└── environment-dev.yml    # Conda development environment
+```
+
+## Configuration
+
+Configuration is managed via Pydantic Settings. Create a `.env` file to customize:
+
+```bash
+# Performance
+ASYNC_MAX_CONCURRENT=5
+ASYNC_REQUESTS_PER_SECOND=2.0
+
+# Caching
+CACHE_ENABLED=true
+CACHE_EXPIRATION_HOURS=24
+
+# Data Quality
+STALENESS_THRESHOLD_DAYS=1
+MIN_QUALITY_SCORE=0.5
+
+# Alpha Vantage (optional fallback)
+AV_APIKEY=your_api_key_here
+```
+
+All settings can be overridden via environment variables or CLI arguments.
+
+## Data Sources
+
+### Primary: Yahoo Finance (yfinance)
+
+- Stock prices and historical data
+- Market capitalization
+- Financial statements (EBIT, debt, cash)
+- Fundamental ratios
+
+### Fallback: Alpha Vantage
+
+Optional fallback for missing financial data (requires API key in `.env`):
+
+- Balance sheet data (for Net Working Capital, Net Fixed Assets)
+- Income statement data (for EBIT)
+- Pre-calculated ratios (Return on Capital)
+
+### Manual Data Downloads
+
+For production use, consider downloading Magic Formula and Acquirer's Multiple data manually:
+
+- **Magic Formula**: [magicformulainvesting.com](https://www.magicformulainvesting.com/)
+- **Acquirer's Multiple**: [acquirersmultiple.com](https://www.acquirersmultiple.com/)
+
+The tool supports CSV input from these sources (see [CSV Input Support](#csv-input-support)).
+
 ## Data Quality & Performance
 
 ### Data Quality Features
 
-- **Outlier Detection**: Automatically flags suspicious metrics (e.g., P/E > 1000, impossible market caps)
-- **Staleness Checks**: Warns when data is older than 1 day (configurable)
-- **Quality Scoring**: Each ticker gets a quality score (0-1) based on:
-  - Completeness of required fields
-  - Presence of outliers
-  - Data freshness
-  - Ticker status
-- **Status Tracking**: Tickers are classified as:
-  - `ACTIVE`: Valid data available
-  - `INACTIVE`: Ticker exists but data incomplete
-  - `DELISTED`: Ticker no longer trades
-  - `STALE`: Data is too old
-  - `DATA_UNAVAILABLE`: Critical data missing
+- **Outlier Detection**: Flags suspicious metrics (e.g., P/E > 1000)
+- **Staleness Checks**: Warns when data is older than 1 day
+- **Quality Scoring**: Each ticker gets a score (0-1) based on completeness, outliers, freshness, and status
+- **Status Tracking**: ACTIVE, INACTIVE, DELISTED, STALE, DATA_UNAVAILABLE
 
 ### Performance Optimizations
 
-- **Async Fetching**: Concurrent API calls with configurable rate limiting
-  - Default: 5 concurrent requests, 2 requests/second
-  - Can be tuned via `--max-concurrent` and `--requests-per-second`
-  - 3-5x faster than sequential fetching for large symbol lists
-- **SQLite Caching**: Optional caching layer reduces redundant API calls
-  - Cache expiration: 24 hours (configurable)
-  - Automatic cache cleanup of expired entries
-  - Disable with `--no-cache` flag
-
-## Data Sources
-
-### Current Implementation
-
-- **Yahoo Finance (yfinance)**: Primary data source for:
-  - Stock prices and historical data
-  - Market capitalization
-  - Financial statements (EBIT, debt, cash)
-  - Fundamental ratios
-
-### Manual Data Downloads
-
-**Note**: For production use, you may need to download Magic Formula and Acquirer's Multiple data manually from their respective websites:
-
-- **Magic Formula**: Data available from [magicformulainvesting.com](https://www.magicformulainvesting.com/)
-- **Acquirer's Multiple**: Data available from [acquirersmultiple.com](https://www.acquirersmultiple.com/)
-
-The current implementation uses yfinance as a proxy, but for maximum accuracy, consider integrating manually downloaded data.
-
-### Alternative APIs (Future Enhancements)
-
-For production use, consider these APIs:
-
-- **Alpha Vantage**: Free tier available, requires API key
-- **Polygon.io**: Real-time and historical data, WebSocket support
-- **Nasdaq Data Link (Quandl)**: Comprehensive financial datasets
-- **Financial Modeling Prep**: Free tier with financial statements
-
-## Configuration
-
-Configuration is managed via Pydantic Settings, which supports:
-
-1. **Environment Variables**: Set variables in `.env` file or environment
-2. **Default Values**: Sensible defaults in `config/settings_pydantic.py`
-
-### Key Configuration Options
-
-Create a `.env` file (see `.env.example`) to customize:
-
-```bash
-# Performance
-ASYNC_MAX_CONCURRENT=5          # Max concurrent async requests
-ASYNC_REQUESTS_PER_SECOND=2.0   # Rate limit
-
-# Caching
-CACHE_ENABLED=true               # Enable SQLite caching
-CACHE_EXPIRATION_HOURS=24        # Cache expiration
-
-# Data Quality
-STALENESS_THRESHOLD_DAYS=1       # Max age for fresh data
-MIN_QUALITY_SCORE=0.5            # Minimum quality for rankings
-
-# Outlier Detection
-OUTLIER_PE_RATIO=1000.0          # Max P/E ratio before flagging
-OUTLIER_PRICE_TO_SALES=1000.0    # Max P/S ratio before flagging
-```
-
-All settings can be overridden via environment variables or CLI arguments.
+- **Async Fetching**: Concurrent API calls (default: 5 concurrent, 2 req/sec) - 3-5x faster than sequential
+- **SQLite Caching**: Optional caching layer reduces redundant API calls (24-hour expiration, configurable)
+- **Batch Price Fetching**: Uses `yf.download()` for efficient bulk price data retrieval
 
 ## Development
 
 ### Running Tests
 
 ```bash
-# Unit tests only
-pytest tests/unit/ -v
-
-# Integration tests only
-pytest tests/integration/ -v
-
-# All tests
-pytest tests/ -v
-
-# With coverage
-pytest tests/ --cov=src --cov-report=html
+pytest tests/ -v                    # All tests
+pytest tests/unit/ -v               # Unit tests only
+pytest tests/ --cov=src --cov-report=html  # With coverage
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
-make format
-
-# Lint code
-make lint
-
-# Fix linting issues
-make lint-fix
-
-# Type checking
-make type-check
-
-# Run all checks
-make check
-
-# Auto-fix all issues
-make fix
+make format      # Format code
+make lint        # Lint code
+make lint-fix    # Fix linting issues
+make type-check  # Type checking
+make check       # Run all checks
+make fix         # Auto-fix all issues
 ```
 
 ### Adding a New Strategy
 
-1. Create a new strategy class in `src/strategies/`:
-
-```python
-from src.strategies.base_strategy import BaseStrategy
-from src.data.models.ticker_data import TickerData
-
-class MyNewStrategy(BaseStrategy):
-    def calculate(self, ticker_data: list[TickerData]) -> list[dict]:
-        # Your calculation logic
-        pass
-
-    def get_strategy_name(self) -> str:
-        return "My New Strategy"
-```
-
-2. Register it in `config/settings.py`:
-
-```python
-STRATEGY_MY_NEW = "my_new"
-SUPPORTED_STRATEGIES.append(STRATEGY_MY_NEW)
-```
-
-3. Add factory method in `scripts/run_analysis.py`:
-
-```python
-if strategy_name == STRATEGY_MY_NEW:
-    return MyNewStrategy()
-```
-
+1. Create strategy class in `src/strategies/` extending `BaseStrategy`
+2. Register in `config/settings_pydantic.py`
+3. Add factory method in `scripts/run_analysis.py`
 4. Write tests in `tests/unit/test_strategies.py`
 
 ## Limitations & Known Issues
 
-1. **Data Availability**: yfinance may not have complete financial data for all tickers, especially:
-
-   - EBIT (may fall back to EBITDA)
-   - Net Working Capital
-   - Net Fixed Assets
-
-2. **Rate Limiting**: YFinance has rate limits. The tool includes sleep delays, but for large symbol lists, consider:
-
-   - Using paid APIs
-   - Implementing caching
-   - Using async/concurrent fetching (future enhancement)
-
-3. **Manual Data**: For production accuracy, Magic Formula and Acquirer's Multiple data should be downloaded manually from their official websites.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `make check` to ensure code quality
-5. Write tests for new functionality
-6. Submit a pull request
-
-## License
-
-See [LICENSE](LICENSE) file for details.
+1. **Data Availability**: yfinance may not have complete financial data for all tickers (EBIT may fall back to EBITDA; NWC/NFA may be missing)
+2. **Rate Limiting**: YFinance has rate limits. Use async mode and caching for large symbol lists
+3. **Manual Data**: For production accuracy, consider using manually downloaded CSV data from official websites
 
 ## References
 
@@ -419,8 +389,6 @@ See [LICENSE](LICENSE) file for details.
 - **Deep Value** by Tobias Carlisle
 - **The Acquirer's Multiple** by Tobias Carlisle
 
-## Acknowledgments
+## License
 
-- Joel Greenblatt for the Magic Formula methodology
-- Tobias Carlisle for the Acquirer's Multiple methodology
-- The yfinance library maintainers
+See [LICENSE](LICENSE) file for details.

@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
@@ -469,15 +469,35 @@ Examples:
                     f"Could not calculate earnings_yield: {e}"
                 )
 
-        # Calculate return_on_capital if we have EBIT and capital components
-        if (
-            ticker_dict.get("ebit")
-            and not ticker_dict.get("return_on_capital")
-            and (
-                ticker_dict.get("net_working_capital") is not None
-                or ticker_dict.get("net_fixed_assets") is not None
-            )
-        ):
+        # Calculate return_on_capital - try pre-calculated first, then calculate
+        symbol = ticker_dict.get("symbol", "Unknown")
+        has_ebit = bool(ticker_dict.get("ebit"))
+        has_roc = ticker_dict.get("return_on_capital") is not None
+        has_nwc = ticker_dict.get("net_working_capital") is not None
+        has_nfa = ticker_dict.get("net_fixed_assets") is not None
+
+        # Step 1: If we don't have ROC, try to get pre-calculated from Alpha Vantage
+        if has_ebit and not has_roc:
+            logger.debug(f"{symbol}: ROC missing, trying Alpha Vantage for pre-calculated ROC...")
+            try:
+                from src.data.fetchers.alphavantage_fetcher import (
+                    fetch_missing_financial_data_alphavantage,
+                )
+
+                av_data = fetch_missing_financial_data_alphavantage(symbol, ["return_on_capital"])
+
+                if "return_on_capital" in av_data and av_data["return_on_capital"] is not None:
+                    ticker_dict["return_on_capital"] = av_data["return_on_capital"]
+                    logger.info(
+                        f"{symbol}: Using pre-calculated ROC from Alpha Vantage: "
+                        f"{ticker_dict['return_on_capital']:.4f}"
+                    )
+                    has_roc = True
+            except Exception as e:
+                logger.debug(f"{symbol}: Could not fetch ROC from Alpha Vantage: {e}")
+
+        # Step 2: If still no ROC, calculate it using NWC and NFA (which we may have from yfinance or Alpha Vantage)
+        if has_ebit and not has_roc and (has_nwc or has_nfa):
             try:
                 ticker_dict["return_on_capital"] = calculate_return_on_capital(
                     ticker_dict["ebit"],
@@ -486,22 +506,95 @@ Examples:
                 )
             except (MissingDataError, InvalidDataError, ValueError) as e:
                 # InvalidDataError means capital_employed <= 0 (negative NWC or NFA)
-                # This is expected for some companies, so we just skip ROC calculation
-                logger.debug(
-                    f"{ticker_dict.get('symbol', 'Unknown')}: "
-                    f"Could not calculate return_on_capital: {e}",
-                )
-        elif (
-            ticker_dict.get("ebit")
-            and not ticker_dict.get("return_on_capital")
-            and ticker_dict.get("net_working_capital") is None
-            and ticker_dict.get("net_fixed_assets") is None
-        ):
-            # Log why ROC can't be calculated
-            logger.debug(
-                f"{ticker_dict.get('symbol', 'Unknown')}: "
-                "Cannot calculate return_on_capital: missing net_working_capital and net_fixed_assets"
+                # Try Alpha Vantage as fallback if we got invalid data
+                error_msg = str(e)
+                if (
+                    "Capital Employed must be positive" in error_msg
+                    or "must be positive" in error_msg
+                ):
+                    logger.info(
+                        f"{symbol}: ROC calculation failed ({error_msg}), trying Alpha Vantage fallback..."
+                    )
+                    try:
+                        from src.data.fetchers.alphavantage_fetcher import (
+                            fetch_missing_financial_data_alphavantage,
+                        )
+
+                        missing_fields = ["net_working_capital", "net_fixed_assets"]
+                        av_data = fetch_missing_financial_data_alphavantage(symbol, missing_fields)
+
+                        # Update ticker_dict with Alpha Vantage data if we got better values
+                        if (
+                            "net_working_capital" in av_data
+                            and av_data["net_working_capital"] is not None
+                        ):
+                            ticker_dict["net_working_capital"] = av_data["net_working_capital"]
+                        if (
+                            "net_fixed_assets" in av_data
+                            and av_data["net_fixed_assets"] is not None
+                        ):
+                            ticker_dict["net_fixed_assets"] = av_data["net_fixed_assets"]
+
+                        # Try calculating ROC again with Alpha Vantage data
+                        if (
+                            ticker_dict.get("net_working_capital") is not None
+                            or ticker_dict.get("net_fixed_assets") is not None
+                        ):
+                            try:
+                                ticker_dict["return_on_capital"] = calculate_return_on_capital(
+                                    ticker_dict["ebit"],
+                                    ticker_dict.get("net_working_capital") or 0.0,
+                                    ticker_dict.get("net_fixed_assets") or 0.0,
+                                )
+                                logger.info(
+                                    f"{symbol}: Successfully calculated ROC using Alpha Vantage data"
+                                )
+                            except (MissingDataError, InvalidDataError, ValueError) as e2:
+                                logger.debug(
+                                    f"{symbol}: Still could not calculate ROC after Alpha Vantage: {e2}"
+                                )
+                    except Exception as av_error:
+                        logger.debug(f"{symbol}: Alpha Vantage fallback failed: {av_error}")
+                else:
+                    logger.debug(
+                        f"{symbol}: Could not calculate return_on_capital: {e}",
+                    )
+        elif has_ebit and not has_roc and not has_nwc and not has_nfa:
+            # Try Alpha Vantage fallback for missing NWC/NFA
+            logger.info(
+                f"{symbol}: Missing NWC/NFA for ROC calculation, trying Alpha Vantage fallback..."
             )
+            try:
+                from src.data.fetchers.alphavantage_fetcher import (
+                    fetch_missing_financial_data_alphavantage,
+                )
+
+                missing_fields = ["net_working_capital", "net_fixed_assets"]
+                av_data = fetch_missing_financial_data_alphavantage(symbol, missing_fields)
+
+                # Update ticker_dict with Alpha Vantage data
+                if "net_working_capital" in av_data and av_data["net_working_capital"] is not None:
+                    ticker_dict["net_working_capital"] = av_data["net_working_capital"]
+                if "net_fixed_assets" in av_data and av_data["net_fixed_assets"] is not None:
+                    ticker_dict["net_fixed_assets"] = av_data["net_fixed_assets"]
+
+                # Try calculating ROC again if we got data
+                if (
+                    ticker_dict.get("net_working_capital") is not None
+                    or ticker_dict.get("net_fixed_assets") is not None
+                ):
+                    try:
+                        ticker_dict["return_on_capital"] = calculate_return_on_capital(
+                            ticker_dict["ebit"],
+                            ticker_dict.get("net_working_capital") or 0.0,
+                            ticker_dict.get("net_fixed_assets") or 0.0,
+                        )
+                    except (MissingDataError, InvalidDataError, ValueError) as e:
+                        logger.debug(
+                            f"{symbol}: Could not calculate return_on_capital after Alpha Vantage fetch: {e}"
+                        )
+            except Exception as e:
+                logger.debug(f"{symbol}: Alpha Vantage fallback failed: {e}")
 
         # Calculate acquirers_multiple if we have EBIT and EV
         if (
@@ -533,9 +626,10 @@ Examples:
         if args.output:
             output_path = args.output
         else:
-            # Generate output filename: {input_name}_with_results.csv
+            # Generate output filename: {input_name}_with_results_{timestamp}.csv
             input_stem = args.csv_input.stem
-            output_path = args.csv_input.parent / f"{input_stem}_with_results.csv"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = args.csv_input.parent / f"{input_stem}_with_results_{timestamp}.csv"
 
         logger.info(f"Merging calculated results with CSV: {args.csv_input} -> {output_path}")
         try:
@@ -550,7 +644,8 @@ Examples:
     else:
         # Original behavior: write to new file
         if not args.output:
-            output_filename = f"{args.strategy}_results.{args.output_format}"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"{args.strategy}_results_{timestamp}.{args.output_format}"
             output_path = settings.output_dir / output_filename
         else:
             output_path = args.output

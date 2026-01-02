@@ -141,16 +141,25 @@ def calculate_quality_score(ticker_data: TickerData) -> float:
     """
     score = 1.0
 
+    # Core fields required for calculations
     critical_fields = [
         "price",
         "market_cap",
         "ebit",
         "enterprise_value",
-        "net_working_capital",
-        "net_fixed_assets",
     ]
     missing_critical = sum(1 for field in critical_fields if getattr(ticker_data, field) is None)
     score -= missing_critical * 0.2
+
+    # NWC and NFA are only critical if we don't have pre-calculated ROC
+    # If ROC is available (from any source), NWC/NFA are not required
+    if ticker_data.return_on_capital is None:
+        # ROC not available - need NWC and NFA to calculate it
+        if ticker_data.net_working_capital is None:
+            score -= 0.1
+        if ticker_data.net_fixed_assets is None:
+            score -= 0.1
+    # If ROC is available, NWC/NFA missing is not penalized (they may have come from AV)
 
     outliers = detect_outliers(ticker_data)
     score -= len(outliers) * 0.1
@@ -167,11 +176,13 @@ def calculate_quality_score(ticker_data: TickerData) -> float:
 def assess_data_quality(ticker_data: TickerData) -> TickerData:
     """Assess and update data quality for a ticker.
 
+    Creates a new TickerData object with updated quality metrics (immutable approach).
+
     Args:
         ticker_data: TickerData object to assess.
 
     Returns:
-        Updated TickerData with quality score and status.
+        New TickerData with quality score and status updated.
     """
     outliers = detect_outliers(ticker_data)
     is_stale = check_staleness(ticker_data)
@@ -184,29 +195,39 @@ def assess_data_quality(ticker_data: TickerData) -> TickerData:
         or ticker_data.enterprise_value is not None
     )
 
+    # Determine new status
+    new_status = ticker_data.status
     if (ticker_data.price is None or ticker_data.price <= 0) and not has_financial_data:
         # Only mark as DELISTED if we have no financial data at all
         if ticker_data.status == TickerStatus.ACTIVE:
-            ticker_data.status = TickerStatus.DATA_UNAVAILABLE
+            new_status = TickerStatus.DATA_UNAVAILABLE
         else:
-            ticker_data.status = TickerStatus.DELISTED
-    elif (ticker_data.price is None or ticker_data.price <= 0) and has_financial_data:
-        # We have financial data but no price - this is OK for CSV input
-        # Don't change status from ACTIVE to DATA_UNAVAILABLE just because price is missing
-        # Price is not required for Magic Formula/Acquirer's Multiple calculations
-        # Only change status if it's already something other than ACTIVE
-        if ticker_data.status not in (TickerStatus.ACTIVE, TickerStatus.DATA_UNAVAILABLE):
-            # Only update if status indicates a real problem (DELISTED, STALE, etc.)
-            pass
+            new_status = TickerStatus.DELISTED
     elif is_stale:
-        ticker_data.status = TickerStatus.STALE
+        new_status = TickerStatus.STALE
     elif len(outliers) > 2:
-        ticker_data.status = TickerStatus.DATA_UNAVAILABLE
+        new_status = TickerStatus.DATA_UNAVAILABLE
 
     # Set timestamp BEFORE calculating quality score (so staleness check uses it)
-    if ticker_data.data_timestamp is None:
-        ticker_data.data_timestamp = datetime.now()
+    new_timestamp = ticker_data.data_timestamp
+    if new_timestamp is None:
+        new_timestamp = datetime.now()
 
-    ticker_data.quality_score = calculate_quality_score(ticker_data)
+    # Create temporary TickerData for quality score calculation
+    # Use model_copy to avoid duplicate keyword arguments
+    temp_ticker = ticker_data.model_copy(
+        update={
+            "status": new_status,
+            "data_timestamp": new_timestamp,
+        }
+    )
+    quality_score = calculate_quality_score(temp_ticker)
 
-    return ticker_data
+    # Return new TickerData with all updates using model_copy
+    return ticker_data.model_copy(
+        update={
+            "status": new_status,
+            "data_timestamp": new_timestamp,
+            "quality_score": quality_score,
+        }
+    )

@@ -79,3 +79,5 @@ Thumbs.db
 # Project specific
 quotes.csv
 *.html
+
+*.csv

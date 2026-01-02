@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,18 +28,18 @@ class Settings(BaseSettings):
     strategy_dca: str = "dca"
 
     # Async fetcher settings (conservative defaults to avoid API throttling)
-    async_max_concurrent: int = 10
-    async_requests_per_second: float = 5.0
-    async_retry_attempts: int = 3
-    async_retry_delay: float = 1.0
+    async_max_concurrent: int = Field(default=10, ge=1, description="Maximum concurrent async requests")
+    async_requests_per_second: float = Field(default=5.0, gt=0.0, description="Rate limit for async requests")
+    async_retry_attempts: int = Field(default=3, ge=1, description="Number of retry attempts")
+    async_retry_delay: float = Field(default=1.0, gt=0.0, description="Initial retry delay in seconds")
 
     # Cache settings
     cache_enabled: bool = True
-    cache_expiration_hours: int = 24
+    cache_expiration_hours: int = Field(default=24, ge=0, description="Cache expiration time in hours")
 
     # Data quality settings
-    staleness_threshold_days: int = 1
-    min_quality_score: float = 0.5
+    staleness_threshold_days: int = Field(default=1, ge=0, description="Days before data is considered stale")
+    min_quality_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Minimum quality score threshold")
 
     # Outlier thresholds
     outlier_pe_ratio: float = 1000.0
@@ -55,9 +56,17 @@ class Settings(BaseSettings):
     lookback_12months: int = 12
 
     # DCA defaults
-    dca_investment_amount: float = 1000.0
-    dca_frequency: str = "monthly"
-    dca_slippage_bps: int = 10
+    dca_investment_amount: float = Field(default=1000.0, gt=0.0, description="DCA investment amount per period")
+    dca_frequency: str = Field(default="monthly", description="DCA frequency: daily, weekly, or monthly")
+    dca_slippage_bps: int = Field(default=10, ge=0, description="DCA slippage in basis points")
+
+    # Alpha Vantage API (optional fallback)
+    av_apikey: str | None = None
+    av_rate_limit_delay: float = Field(default=12.1, gt=0.0, description="Seconds between Alpha Vantage API calls (5 calls/min)")
+    av_timeout_seconds: float = Field(default=10.0, gt=0.0, description="Request timeout in seconds")
+    av_cache_path: Path = cache_dir / "alphavantage_cache.db"
+    av_cache_expiration_hours: int = Field(default=24, ge=0, description="Alpha Vantage cache expiration in hours")
+    ebitda_to_ebit_multiplier: float = Field(default=0.75, gt=0.0, le=1.0, description="Multiplier for EBITDA fallback to EBIT (industry-specific approximation)")
 
     model_config = SettingsConfigDict(
         env_file=".env",

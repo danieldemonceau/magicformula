@@ -49,10 +49,14 @@ class TickerData(BaseModel):
         """Validate symbol is uppercase."""
         return v.upper().strip()
 
-    @field_validator("price", "market_cap", "total_debt", "cash", "ebit")
+    @field_validator("price", "market_cap", "total_debt", "cash")
     @classmethod
     def validate_positive_or_none(cls, v: float | None) -> float | None:
-        """Validate financial metrics are positive or None."""
+        """Validate financial metrics are positive or None.
+
+        Note: EBIT is excluded because negative EBIT is valid financial data
+        (companies can have operating losses).
+        """
         if v is not None and v < 0:
             return None
         return v

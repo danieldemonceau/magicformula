@@ -81,8 +81,16 @@ module = [
     "pandas.*",
     "dateutil.*",
     "pydantic_settings.*",
+    "aiohttp.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "src.data.fetchers.alphavantage_fetcher",
+    "src.data.fetchers.fetcher_utils",
+]
+disable_error_code = ["valid-type"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

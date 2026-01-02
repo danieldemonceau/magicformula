@@ -34,7 +34,11 @@ class TestMagicFormulaStrategy:
         """Test Magic Formula with invalid data."""
         strategy = MagicFormulaStrategy()
         results = strategy.calculate([invalid_ticker_data])
-        assert results == []
+        # Strategy now returns all tickers (even invalid ones) with None ranks
+        assert len(results) == 1
+        assert results[0]["magic_formula_score"] is None
+        assert results[0]["earnings_yield_rank"] is None
+        assert results[0]["return_on_capital_rank"] is None
 
     def test_get_strategy_name(self) -> None:
         """Test strategy name."""
@@ -72,7 +76,9 @@ class TestAcquirersMultipleStrategy:
         """Test Acquirer's Multiple with invalid data."""
         strategy = AcquirersMultipleStrategy()
         results = strategy.calculate([invalid_ticker_data])
-        assert results == []
+        # Strategy now returns all tickers (even invalid ones) with None ranks
+        assert len(results) == 1
+        assert results[0]["acquirers_multiple_rank"] is None
 
     def test_get_strategy_name(self) -> None:
         """Test strategy name."""

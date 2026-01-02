@@ -6,17 +6,25 @@ from dateutil.relativedelta import relativedelta
 
 
 def get_last_business_day(target_date: date | None = None) -> date:
-    """Get the last business day before or on the target date.
+    """Get the last business day on or before the target date.
+
+    If target_date is a business day, returns target_date.
+    Otherwise, returns the most recent business day before target_date.
 
     Args:
         target_date: Target date. If None, uses today.
 
     Returns:
-        Last business day (Monday-Friday).
+        Last business day (Monday-Friday) on or before target_date.
     """
     if target_date is None:
         target_date = date.today()
 
+    # If target_date is already a business day, return it
+    if target_date.weekday() < 5:  # Monday-Friday (0-4)
+        return target_date
+
+    # Otherwise, go back to find the last business day
     last_business = target_date - timedelta(days=1)
     while last_business.weekday() > 4:  # Saturday = 5, Sunday = 6
         last_business -= timedelta(days=1)

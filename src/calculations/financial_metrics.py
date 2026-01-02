@@ -179,13 +179,16 @@ def extract_financial_data_from_yfinance(
                     f"{symbol}: Using Operating Income as EBIT: ${ebit:,.0f}",
                 )
         elif ebitda is not None:
-            # Fallback: EBITDA × 0.75 (assumes ~25% depreciation)
+            # Fallback: EBITDA × multiplier (configurable, defaults to 0.75)
             # This is a rough approximation and may not be accurate for all companies
-            ebit = ebitda * 0.75
+            from config.settings_pydantic import settings
+
+            multiplier = getattr(settings, "ebitda_to_ebit_multiplier", 0.75)
+            ebit = ebitda * multiplier
             is_ebitda_fallback = True
             if symbol:
                 logger.warning(
-                    f"{symbol}: EBIT unavailable, using adjusted EBITDA (×0.75). "
+                    f"{symbol}: EBIT unavailable, using adjusted EBITDA (×{multiplier}). "
                     f"Original EBITDA: ${ebitda:,.0f}, Adjusted EBIT: ${ebit:,.0f}. "
                     f"Note: This approximation may not be accurate for all industries.",
                 )

@@ -142,3 +142,34 @@ run-acquirers: ## Run Acquirer's Multiple analysis
 run-dca: ## Run DCA analysis
 	@python scripts/run_analysis.py --strategy dca
 
+# Default CSV paths (can be overridden via command line: make run-both-strategies MF_CSV=/path/to/file.csv)
+MF_CSV ?= data/magic_formula.csv
+AM_CSV ?= data/acquirers_multiple.csv
+MF_OUTPUT ?= data/outputs/magic_formula_with_results.csv
+AM_OUTPUT ?= data/outputs/acquirers_multiple_with_results.csv
+MERGED_OUTPUT ?= ./data/outputs/combined_strategy_results.csv
+
+run-both-strategies: ## Run both Magic Formula and Acquirer's Multiple analyses and merge results
+	@echo "Running Magic Formula analysis..."
+	@echo "  Input: $(MF_CSV)"
+	@python scripts/run_analysis.py --strategy magic_formula --csv-input $(MF_CSV) || true
+	@echo "Running Acquirer's Multiple analysis..."
+	@echo "  Input: $(AM_CSV)"
+	@python scripts/run_analysis.py --strategy acquirers_multiple --csv-input $(AM_CSV) || true
+	@echo "Merging results..."
+	@TIMESTAMP=$$(python -c "from datetime import datetime; print(datetime.now().strftime('%Y%m%d_%H%M%S'))"); \
+	MF_LATEST=$$(ls -t data/magic_formula_with_results_*.csv 2>/dev/null | head -1 || echo ""); \
+	AM_LATEST=$$(ls -t data/acquirers_multiple_with_results_*.csv 2>/dev/null | head -1 || echo ""); \
+	if [ -z "$$MF_LATEST" ] || [ -z "$$AM_LATEST" ]; then \
+		echo "Error: Could not find output files. Check if analyses completed successfully."; \
+		echo "  Looking for: data/magic_formula_with_results_*.csv"; \
+		echo "  Looking for: data/acquirers_multiple_with_results_*.csv"; \
+		exit 1; \
+	fi; \
+	MERGED_OUTPUT="data/outputs/combined_strategy_results_$$TIMESTAMP.csv"; \
+	echo "  Magic Formula: $$MF_LATEST"; \
+	echo "  Acquirer's Multiple: $$AM_LATEST"; \
+	echo "  Merged output: $$MERGED_OUTPUT"; \
+	python scripts/merge_strategy_results.py --magic-formula "$$MF_LATEST" --acquirers-multiple "$$AM_LATEST" --output "$$MERGED_OUTPUT"; \
+	echo "Results merged to: $$MERGED_OUTPUT"
+

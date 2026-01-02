@@ -83,7 +83,10 @@ class YFinanceFetcher(BaseFetcher):
         )
 
         # Use shared calculation function to eliminate duplication
-        metrics = calculate_metrics_from_financial_data(financial_data, symbol)
+        # Returns (metrics, updated_financial_data) - updated_financial_data includes Alpha Vantage data
+        metrics, updated_financial_data = calculate_metrics_from_financial_data(
+            financial_data, symbol
+        )
         enterprise_value = metrics["enterprise_value"]
         earnings_yield = metrics["earnings_yield"]
         return_on_capital = metrics["return_on_capital"]
@@ -102,10 +105,11 @@ class YFinanceFetcher(BaseFetcher):
             )
 
         # Use shared function to build TickerData
+        # Use updated_financial_data which includes Alpha Vantage data (NWC, NFA)
         ticker_data = build_ticker_data(
             symbol=symbol,
             price_data=price_data,
-            financial_data=financial_data,
+            financial_data=updated_financial_data,
             fundamental_data=fundamental_data,
             metrics=metrics,
         )
@@ -135,61 +139,49 @@ class YFinanceFetcher(BaseFetcher):
                 logger.warning(
                     f"{symbol}: Calculation error (not retrying): {e}",
                 )
-                error_ticker = TickerData(
-                    symbol=symbol,
-                    status=TickerStatus.DATA_UNAVAILABLE,
-                    sector=None,
-                    industry=None,
-                    price=None,
-                    market_cap=None,
-                    total_debt=None,
-                    cash=None,
-                    ebit=None,
-                    net_working_capital=None,
-                    net_fixed_assets=None,
-                    enterprise_value=None,
-                    earnings_yield=None,
-                    return_on_capital=None,
-                    acquirers_multiple=None,
-                    price_index_6month=None,
-                    price_index_12month=None,
-                    book_to_market=None,
-                    free_cash_flow_yield=None,
-                    price_to_sales=None,
-                    data_timestamp=None,
-                    quality_score=0.0,
-                )
+                error_ticker = self._create_error_ticker_data(symbol)
                 results.append(error_ticker)
             except Exception as e:
                 # Network/API errors - log and create error ticker
                 logger.error(f"Error fetching data for {symbol}: {e}")
-                error_ticker = TickerData(
-                    symbol=symbol,
-                    status=TickerStatus.DATA_UNAVAILABLE,
-                    sector=None,
-                    industry=None,
-                    price=None,
-                    market_cap=None,
-                    total_debt=None,
-                    cash=None,
-                    ebit=None,
-                    net_working_capital=None,
-                    net_fixed_assets=None,
-                    enterprise_value=None,
-                    earnings_yield=None,
-                    return_on_capital=None,
-                    acquirers_multiple=None,
-                    price_index_6month=None,
-                    price_index_12month=None,
-                    book_to_market=None,
-                    free_cash_flow_yield=None,
-                    price_to_sales=None,
-                    data_timestamp=None,
-                    quality_score=0.0,
-                )
+                error_ticker = self._create_error_ticker_data(symbol)
                 results.append(error_ticker)
 
             if i < len(symbols) - 1:
                 time.sleep(self.sleep_time)
 
         return results
+
+    def _create_error_ticker_data(self, symbol: str) -> TickerData:
+        """Create error ticker data.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            TickerData with error status.
+        """
+        return TickerData(
+            symbol=symbol,
+            status=TickerStatus.DATA_UNAVAILABLE,
+            sector=None,
+            industry=None,
+            price=None,
+            market_cap=None,
+            total_debt=None,
+            cash=None,
+            ebit=None,
+            net_working_capital=None,
+            net_fixed_assets=None,
+            enterprise_value=None,
+            earnings_yield=None,
+            return_on_capital=None,
+            acquirers_multiple=None,
+            price_index_6month=None,
+            price_index_12month=None,
+            book_to_market=None,
+            free_cash_flow_yield=None,
+            price_to_sales=None,
+            data_timestamp=None,
+            quality_score=0.0,
+        )

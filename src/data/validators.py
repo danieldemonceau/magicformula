@@ -85,13 +85,10 @@ def filter_valid_tickers(
 
     Args:
         ticker_data_list: List of TickerData objects.
-        validation_func: Validation function that returns bool.
+        validation_func: Validation function that returns bool (already checks status).
 
     Returns:
         Filtered list of valid TickerData objects.
     """
-    return [
-        ticker
-        for ticker in ticker_data_list
-        if validation_func(ticker) and ticker.status == TickerStatus.ACTIVE
-    ]
+    # validation_func already checks ticker.status == TickerStatus.ACTIVE, so no need to check again
+    return [ticker for ticker in ticker_data_list if validation_func(ticker)]

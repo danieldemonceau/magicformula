@@ -37,19 +37,39 @@ class AcquirersMultipleStrategy(BaseStrategy):
 
         if not valid_tickers:
             logger.warning("No valid tickers for Acquirer's Multiple calculation")
-            return []
+            # Return ALL tickers (even invalid ones) so CSV output includes all data
+            # Invalid tickers will have None ranks but still show calculated metrics
+            logger.info("Returning all tickers with calculated metrics (including invalid ones)")
+            results = []
+            for ticker in ticker_data:
+                ticker_dict = ticker.to_dict()
+                ticker_dict["acquirers_multiple_rank"] = None
+                results.append(ticker_dict)
+            return results
 
+        # Calculate ranks only for valid tickers
         data = [ticker.to_dict() for ticker in valid_tickers]
 
         data = rank_series(data, "acquirers_multiple", ascending=True, method="min")
 
-        def sort_key(x: StrategyResultDict) -> float:
+        def sort_key_func(x: StrategyResultDict) -> float:
             rank_val = x.get("acquirers_multiple_rank")
             if isinstance(rank_val, (int, float)):
                 return float(rank_val)
             return float("inf")
 
-        data = sorted(data, key=sort_key)
+        data = sorted(data, key=sort_key_func)
+
+        # Add invalid tickers to output (without ranks) so CSV has complete data
+        valid_symbols = {
+            str(t.get("symbol", "")).upper() for t in data if t.get("symbol") is not None
+        }
+        for ticker in ticker_data:
+            if ticker.symbol.upper() not in valid_symbols:
+                ticker_dict = ticker.to_dict()
+                # Mark as invalid
+                ticker_dict["acquirers_multiple_rank"] = None
+                data.append(ticker_dict)
 
         return data
 

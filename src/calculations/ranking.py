@@ -33,7 +33,13 @@ def rank_series(
     if key not in df.columns:
         return data
 
-    df[rank_key] = df[key].rank(ascending=ascending, method=method).astype(int)
+    # Rank the series, handling NaN/inf values
+    ranks = df[key].rank(ascending=ascending, method=method)
+    # Replace NaN/inf with None (which will be converted to None in dict)
+    # Convert finite values to int, keep NaN/inf as None
+    import numpy as np
+
+    df[rank_key] = ranks.apply(lambda x: int(x) if pd.notna(x) and np.isfinite(x) else None)
 
     result: list[StrategyResultDict] = df.to_dict("records")
     return result

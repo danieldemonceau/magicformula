@@ -2,9 +2,31 @@
 
 import logging
 from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import yfinance as yf
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
+
+    import aiohttp
+
+    # Type alias for aiohttp.ClientSession when available
+    ClientSessionType: TypeAlias = aiohttp.ClientSession
+else:
+    try:
+        import aiohttp
+
+        # Runtime assignment (mypy uses TYPE_CHECKING version)
+        ClientSessionType = aiohttp.ClientSession  # type: ignore[assignment, misc]
+    except ImportError:
+        # Create a dummy class for type hints when aiohttp is not available
+        class _DummyClientSession:
+            pass
+
+        aiohttp = type("aiohttp", (), {"ClientSession": _DummyClientSession})()  # type: ignore[assignment, unused-ignore]
+        ClientSessionType = _DummyClientSession  # type: ignore[assignment, misc]
 
 from src.data.models.ticker_data import TickerData
 from src.data.quality import assess_data_quality
@@ -287,24 +309,23 @@ def build_ticker_data(
     return assess_data_quality(ticker_data)
 
 
-def calculate_metrics_from_financial_data(
+async def calculate_metrics_from_financial_data_async(
     financial_data: FinancialDataDict,
     symbol: str,
-) -> dict[str, float | None]:
-    """Calculate financial metrics from extracted financial data.
+    session: "ClientSessionType | None" = None,
+) -> tuple[dict[str, float | None], FinancialDataDict]:
+    """Calculate financial metrics from extracted financial data (async version).
 
-    This shared function eliminates code duplication across fetchers.
+    This async version is used by async fetchers to avoid blocking the event loop.
 
     Args:
         financial_data: Dictionary with financial data from extract_financial_data_from_yfinance.
         symbol: Ticker symbol (for logging).
+        session: Optional aiohttp session for connection pooling.
 
     Returns:
-        Dictionary with calculated metrics:
-        - enterprise_value: float | None
-        - earnings_yield: float | None
-        - return_on_capital: float | None
-        - acquirers_multiple: float | None
+        Tuple of (metrics dict, updated financial_data dict).
+        The updated financial_data includes Alpha Vantage data (NWC, NFA).
     """
     from src.calculations.exceptions import InvalidDataError
     from src.calculations.financial_metrics import (
@@ -316,7 +337,14 @@ def calculate_metrics_from_financial_data(
 
     enterprise_value = None
     earnings_yield = None
-    return_on_capital = None
+    return_on_capital_raw = financial_data.get("return_on_capital")
+    return_on_capital: float | None = None
+    if return_on_capital_raw is not None and isinstance(return_on_capital_raw, (int, float)):
+        return_on_capital = float(return_on_capital_raw)
+        if symbol:
+            logger.debug(
+                f"{symbol}: Using pre-calculated ROC from yfinance: {return_on_capital:.4f}"
+            )
     acquirers_multiple = None
 
     market_cap_val = financial_data.get("market_cap")
@@ -352,6 +380,254 @@ def calculate_metrics_from_financial_data(
 
             nwc_val = financial_data.get("net_working_capital")
             nfa_val = financial_data.get("net_fixed_assets")
+
+            # Track which fields we've already attempted from Alpha Vantage to avoid duplicate calls
+            av_attempted_fields: set[str] = set()
+            updated_financial_data = {**financial_data}
+
+            # If we don't have pre-calculated ROC, try to get it from Alpha Vantage first
+            if return_on_capital is None and ebit_float > 0:
+                try:
+                    from src.data.fetchers.alphavantage_fetcher import (
+                        fetch_missing_financial_data_alphavantage_async,
+                    )
+
+                    av_data = await fetch_missing_financial_data_alphavantage_async(
+                        symbol,
+                        ["return_on_capital"],
+                        session,
+                    )
+                    av_attempted_fields.add("return_on_capital")
+
+                    if (
+                        "return_on_capital" in av_data
+                        and av_data["return_on_capital"] is not None
+                        and isinstance(av_data["return_on_capital"], (int, float))
+                    ):
+                        return_on_capital = float(av_data["return_on_capital"])
+                        logger.info(
+                            f"{symbol}: Using pre-calculated ROC from Alpha Vantage: {return_on_capital:.4f}"
+                        )
+                except Exception as e:
+                    logger.debug(f"{symbol}: Could not fetch ROC from Alpha Vantage: {e}")
+
+            # If still no ROC, calculate it ourselves using NWC and NFA
+            if return_on_capital is None and ebit_float > 0:
+                # Try Alpha Vantage fallback if NWC/NFA data is missing
+                if (nwc_val is None or nfa_val is None) and ebit_float > 0:
+                    missing_fields = []
+                    if nwc_val is None:
+                        missing_fields.append("net_working_capital")
+                    if nfa_val is None:
+                        missing_fields.append("net_fixed_assets")
+                    # Only try ROC again if we haven't already attempted it
+                    if return_on_capital is None and "return_on_capital" not in av_attempted_fields:
+                        missing_fields.append("return_on_capital")
+
+                    if missing_fields:
+                        try:
+                            from src.data.fetchers.alphavantage_fetcher import (
+                                fetch_missing_financial_data_alphavantage_async,
+                            )
+
+                            av_data = await fetch_missing_financial_data_alphavantage_async(
+                                symbol,
+                                missing_fields,
+                                session,
+                            )
+                            av_attempted_fields.update(missing_fields)
+
+                            # Update with Alpha Vantage data
+                            if (
+                                "net_working_capital" in av_data
+                                and av_data["net_working_capital"] is not None
+                            ):
+                                nwc_val = av_data["net_working_capital"]
+                                updated_financial_data["net_working_capital"] = nwc_val
+                            if (
+                                "net_fixed_assets" in av_data
+                                and av_data["net_fixed_assets"] is not None
+                            ):
+                                nfa_val = av_data["net_fixed_assets"]
+                                updated_financial_data["net_fixed_assets"] = nfa_val
+                            if (
+                                "return_on_capital" in av_data
+                                and av_data["return_on_capital"] is not None
+                            ):
+                                return_on_capital = float(av_data["return_on_capital"])
+                                logger.info(
+                                    f"{symbol}: Using pre-calculated ROC from Alpha Vantage: {return_on_capital:.4f}"
+                                )
+                        except Exception as e:
+                            logger.debug(f"{symbol}: Alpha Vantage fallback failed: {e}")
+
+                if (nwc_val is not None and isinstance(nwc_val, (int, float))) or (
+                    nfa_val is not None and isinstance(nfa_val, (int, float))
+                ):
+                    nwc_float = (
+                        float(nwc_val)
+                        if nwc_val is not None and isinstance(nwc_val, (int, float))
+                        else 0.0
+                    )
+                    nfa_float = (
+                        float(nfa_val)
+                        if nfa_val is not None and isinstance(nfa_val, (int, float))
+                        else 0.0
+                    )
+                    try:
+                        return_on_capital = calculate_return_on_capital(
+                            ebit_float,
+                            nwc_float,
+                            nfa_float,
+                        )
+                        logger.debug(f"{symbol}: Calculated ROC: {return_on_capital:.4f}")
+                    except (ValueError, InvalidDataError) as e:
+                        logger.debug(f"{symbol}: Could not calculate return_on_capital: {e}")
+    else:
+        logger.debug(f"{symbol}: Missing market_cap, cannot calculate EV-based metrics")
+        if "updated_financial_data" not in locals():
+            updated_financial_data = {**financial_data}
+
+    metrics_dict = {
+        "enterprise_value": enterprise_value,
+        "earnings_yield": earnings_yield,
+        "return_on_capital": return_on_capital,
+        "acquirers_multiple": acquirers_multiple,
+    }
+
+    # Ensure updated_financial_data is always defined
+    if "updated_financial_data" not in locals():
+        updated_financial_data = {**financial_data}
+
+    return metrics_dict, updated_financial_data
+
+
+def calculate_metrics_from_financial_data(
+    financial_data: FinancialDataDict,
+    symbol: str,
+) -> tuple[dict[str, float | None], FinancialDataDict]:
+    """Calculate financial metrics from extracted financial data.
+
+    This shared function eliminates code duplication across fetchers.
+    First checks for pre-calculated ROC from yfinance, then tries Alpha Vantage,
+    then calculates if needed.
+
+    Args:
+        financial_data: Dictionary with financial data from extract_financial_data_from_yfinance.
+        symbol: Ticker symbol (for logging).
+
+    Returns:
+        Tuple of (metrics dict, updated financial_data dict).
+        The updated financial_data includes Alpha Vantage data (NWC, NFA).
+    """
+    from src.calculations.exceptions import InvalidDataError
+    from src.calculations.financial_metrics import (
+        calculate_acquirers_multiple,
+        calculate_earnings_yield,
+        calculate_enterprise_value,
+        calculate_return_on_capital,
+    )
+
+    enterprise_value = None
+    earnings_yield = None
+    # Check if we already have pre-calculated ROC from yfinance
+    return_on_capital_raw = financial_data.get("return_on_capital")
+    return_on_capital: float | None = None
+    if return_on_capital_raw is not None and isinstance(return_on_capital_raw, (int, float)):
+        return_on_capital = float(return_on_capital_raw)
+        if symbol:
+            logger.debug(
+                f"{symbol}: Using pre-calculated ROC from yfinance: {return_on_capital:.4f}"
+            )
+    acquirers_multiple = None
+
+    market_cap_val = financial_data.get("market_cap")
+    if market_cap_val and isinstance(market_cap_val, (int, float)):
+        market_cap_float = float(market_cap_val)
+        total_debt_val = financial_data.get("total_debt")
+        total_debt_float = (
+            float(total_debt_val)
+            if total_debt_val and isinstance(total_debt_val, (int, float))
+            else 0.0
+        )
+        cash_val = financial_data.get("cash")
+        cash_float = float(cash_val) if cash_val and isinstance(cash_val, (int, float)) else 0.0
+
+        enterprise_value = calculate_enterprise_value(
+            market_cap_float,
+            total_debt_float,
+            cash_float,
+        )
+
+        ebit_val = financial_data.get("ebit")
+        if ebit_val and isinstance(ebit_val, (int, float)) and enterprise_value:
+            ebit_float = float(ebit_val)
+            try:
+                earnings_yield = calculate_earnings_yield(ebit_float, enterprise_value)
+            except (ValueError, InvalidDataError) as e:
+                logger.debug(f"{symbol}: Could not calculate earnings_yield: {e}")
+
+            try:
+                acquirers_multiple = calculate_acquirers_multiple(ebit_float, enterprise_value)
+            except (ValueError, InvalidDataError) as e:
+                logger.debug(f"{symbol}: Could not calculate acquirers_multiple: {e}")
+
+            nwc_val = financial_data.get("net_working_capital")
+            nfa_val = financial_data.get("net_fixed_assets")
+
+            # Track which fields we've already attempted from Alpha Vantage to avoid duplicate calls
+            av_attempted_fields: set[str] = set()
+            updated_financial_data = {**financial_data}
+
+            # Try Alpha Vantage fallback if data is missing (synchronous version)
+            # Note: This is for sync fetchers only. Async fetchers use calculate_metrics_from_financial_data_async
+            if (nwc_val is None or nfa_val is None) and ebit_float > 0:
+                missing_fields = []
+                if nwc_val is None:
+                    missing_fields.append("net_working_capital")
+                if nfa_val is None:
+                    missing_fields.append("net_fixed_assets")
+                # Also try to get ROC if we still don't have it
+                if return_on_capital is None:
+                    missing_fields.append("return_on_capital")
+
+                if missing_fields:
+                    try:
+                        from src.data.fetchers.alphavantage_fetcher import (
+                            fetch_missing_financial_data_alphavantage,
+                        )
+
+                        av_data = fetch_missing_financial_data_alphavantage(
+                            symbol,
+                            missing_fields,
+                        )
+                        av_attempted_fields.update(missing_fields)
+
+                        # Update local variables and updated_financial_data dict
+                        if (
+                            "net_working_capital" in av_data
+                            and av_data["net_working_capital"] is not None
+                        ):
+                            nwc_val = av_data["net_working_capital"]
+                            updated_financial_data["net_working_capital"] = nwc_val
+                        if (
+                            "net_fixed_assets" in av_data
+                            and av_data["net_fixed_assets"] is not None
+                        ):
+                            nfa_val = av_data["net_fixed_assets"]
+                            updated_financial_data["net_fixed_assets"] = nfa_val
+                        if (
+                            "return_on_capital" in av_data
+                            and av_data["return_on_capital"] is not None
+                            and isinstance(av_data["return_on_capital"], (int, float))
+                        ):
+                            return_on_capital = float(av_data["return_on_capital"])
+                            logger.info(
+                                f"{symbol}: Using pre-calculated ROC from Alpha Vantage: {return_on_capital:.4f}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"{symbol}: Alpha Vantage fallback failed: {e}")
+
             if (nwc_val is not None and isinstance(nwc_val, (int, float))) or (
                 nfa_val is not None and isinstance(nfa_val, (int, float))
             ):
@@ -375,13 +651,16 @@ def calculate_metrics_from_financial_data(
                     logger.debug(f"{symbol}: Could not calculate return_on_capital: {e}")
     else:
         logger.debug(f"{symbol}: Missing market_cap, cannot calculate EV-based metrics")
+        updated_financial_data = {**financial_data}
 
-    return {
+    metrics_dict = {
         "enterprise_value": enterprise_value,
         "earnings_yield": earnings_yield,
         "return_on_capital": return_on_capital,
         "acquirers_multiple": acquirers_multiple,
     }
+
+    return metrics_dict, updated_financial_data
 
 
 def fetch_price_data_batch(
