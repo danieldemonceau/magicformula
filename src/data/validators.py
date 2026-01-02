@@ -35,6 +35,15 @@ def is_financial_sector(ticker_data: TickerData) -> bool:
 def validate_ticker_data_for_magic_formula(ticker_data: TickerData) -> bool:
     """Validate that ticker data has required fields for Magic Formula.
 
+    Requirements:
+    - Status is ACTIVE
+    - Not in financial sector (excluded by Magic Formula methodology)
+    - Has positive earnings_yield (EBIT/EV > 0)
+    - Has positive return_on_capital (EBIT/Capital Employed > 0)
+
+    Note: quality_score is NOT checked here - if we have valid EY and ROC,
+    the ticker should be ranked regardless of quality score.
+
     Args:
         ticker_data: TickerData object to validate.
 
@@ -50,14 +59,21 @@ def validate_ticker_data_for_magic_formula(ticker_data: TickerData) -> bool:
     if ticker_data.earnings_yield is None or ticker_data.earnings_yield <= 0:
         return False
 
-    if ticker_data.return_on_capital is None or ticker_data.return_on_capital <= 0:
-        return False
-
-    return not (ticker_data.quality_score is not None and ticker_data.quality_score < 0.5)
+    # Quality score is informational only - don't reject valid EY/ROC tickers
+    # Return True if ROC is valid (not None and positive)
+    return ticker_data.return_on_capital is not None and ticker_data.return_on_capital > 0
 
 
 def validate_ticker_data_for_acquirers_multiple(ticker_data: TickerData) -> bool:
     """Validate that ticker data has required fields for Acquirer's Multiple.
+
+    Requirements:
+    - Status is ACTIVE
+    - Not in financial sector (excluded by methodology)
+    - Has positive acquirers_multiple (EV/EBIT > 0, meaning positive EBIT)
+
+    Note: quality_score is NOT checked here - if we have valid AM data,
+    the ticker should be ranked regardless of quality score.
 
     Args:
         ticker_data: TickerData object to validate.
@@ -71,10 +87,9 @@ def validate_ticker_data_for_acquirers_multiple(ticker_data: TickerData) -> bool
     if is_financial_sector(ticker_data):
         return False
 
-    if ticker_data.acquirers_multiple is None or ticker_data.acquirers_multiple <= 0:
-        return False
-
-    return not (ticker_data.quality_score is not None and ticker_data.quality_score < 0.5)
+    # Quality score is informational only - don't reject valid AM tickers
+    # Return True if AM is valid (not None and positive)
+    return ticker_data.acquirers_multiple is not None and ticker_data.acquirers_multiple > 0
 
 
 def filter_valid_tickers(

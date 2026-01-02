@@ -472,12 +472,33 @@ def merge_csv_results(
     for row in am_rows:
         all_fieldnames_set.update(row.keys())
 
+    # Fields that should ONLY come from their specific strategy (not mixed)
+    MF_EXCLUSIVE_FIELDS = {
+        "earnings_yield_rank",
+        "return_on_capital_rank",
+        "magic_formula_score",
+    }
+    AM_EXCLUSIVE_FIELDS = {
+        "acquirers_multiple_rank",
+    }
+
     # Helper function to get best value (prefer non-empty from input CSVs)
     def get_best_value(
         key: str, mf_input: dict, am_input: dict, mf_result: dict, am_result: dict
     ) -> Any:
-        """Get best value, preferring input CSV values over calculated."""
-        # Priority: MF input > AM input > Calculated MF > Calculated AM
+        """Get best value, preferring input CSV values over calculated.
+
+        IMPORTANT: Rank/score fields must come from their respective strategies:
+        - MF ranks/score → ONLY from mf_result
+        - AM rank → ONLY from am_result
+        """
+        # Strategy-exclusive fields must come from specific strategy only
+        if key in MF_EXCLUSIVE_FIELDS:
+            return mf_result.get(key)
+        if key in AM_EXCLUSIVE_FIELDS:
+            return am_result.get(key)
+
+        # For other fields: Priority: MF input > AM input > Calculated MF > Calculated AM
         if key in mf_input:
             val = mf_input[key]
             if val and str(val).strip() and str(val).strip().lower() not in ("none", "null", ""):
@@ -935,13 +956,10 @@ def merge_csv_results(
         am_pct = am_percentiles.get(idx)
         mom_pct = mom_percentiles.get(idx)
 
-        # REQUIRE BOTH MF AND AM scores to be valid for composite calculation
-        # Tickers missing either will NOT be considered for investment
-        if mf_pct is not None and am_pct is not None:
-            # Momentum is optional - use neutral 50 if missing
-            mom_component = (mom_pct if mom_pct is not None else 50.0) * weight_momentum
-
-            composite = (mf_pct * weight_mf) + (am_pct * weight_am) + mom_component
+        # REQUIRE ALL THREE components (MF, AM, Momentum) for composite calculation
+        # Tickers missing ANY component will NOT be considered for investment
+        if mf_pct is not None and am_pct is not None and mom_pct is not None:
+            composite = (mf_pct * weight_mf) + (am_pct * weight_am) + (mom_pct * weight_momentum)
             composite_scores.append((idx, composite))
             merged_row_data["composite_score"] = round(composite, 2)
         else:
