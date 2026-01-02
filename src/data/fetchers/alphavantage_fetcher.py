@@ -350,7 +350,9 @@ async def fetch_company_overview_alphavantage_async(
     result: dict[str, float | None] = {}
     if return_on_capital is not None:
         result["return_on_capital"] = return_on_capital
-        logger.info(f"{symbol}: Found pre-calculated ROC in Alpha Vantage: {return_on_capital:.4f}")
+        logger.debug(
+            f"{symbol}: Found pre-calculated ROC in Alpha Vantage: {return_on_capital:.4f}"
+        )
 
     return result
 
@@ -492,13 +494,13 @@ async def fetch_missing_financial_data_alphavantage_async(
 
     # First, try to get pre-calculated ROC from company overview (if requested)
     if "return_on_capital" in missing_fields:
-        logger.info(
+        logger.debug(
             f"Fetching company overview from Alpha Vantage for {symbol} (looking for pre-calculated ROC)..."
         )
         overview = await fetch_company_overview_alphavantage_async(symbol, session)
         if "return_on_capital" in overview and overview["return_on_capital"] is not None:
             result["return_on_capital"] = overview["return_on_capital"]
-            logger.info(
+            logger.debug(
                 f"{symbol}: Using pre-calculated ROC from Alpha Vantage: {result['return_on_capital']:.4f}"
             )
             # Remove from missing_fields so we don't try to calculate it
@@ -516,7 +518,7 @@ async def fetch_missing_financial_data_alphavantage_async(
     )
 
     if needs_balance_sheet:
-        logger.info(
+        logger.debug(
             f"Fetching balance sheet from Alpha Vantage for {symbol} (missing: {missing_fields})"
         )
         balance_sheet = await fetch_balance_sheet_alphavantage_async(symbol, session)
@@ -533,7 +535,7 @@ async def fetch_missing_financial_data_alphavantage_async(
                 and current_liabilities is not None
             ):
                 result["net_working_capital"] = current_assets - current_liabilities
-                logger.info(
+                logger.debug(
                     f"{symbol}: Fetched net_working_capital from Alpha Vantage: "
                     f"{result['net_working_capital']:,.0f}"
                 )
@@ -541,19 +543,19 @@ async def fetch_missing_financial_data_alphavantage_async(
             # Use net PPE as net_fixed_assets
             if "net_fixed_assets" in missing_fields and net_ppe is not None:
                 result["net_fixed_assets"] = net_ppe
-                logger.info(
+                logger.debug(
                     f"{symbol}: Fetched net_fixed_assets from Alpha Vantage: "
                     f"{result['net_fixed_assets']:,.0f}"
                 )
 
     # Check if we need income statement data
     if "ebit" in missing_fields:
-        logger.info(f"Fetching income statement from Alpha Vantage for {symbol} (missing: EBIT)")
+        logger.debug(f"Fetching income statement from Alpha Vantage for {symbol} (missing: EBIT)")
         income_statement = await fetch_income_statement_alphavantage_async(symbol, session)
 
         if income_statement and "ebit" in income_statement:
             result["ebit"] = income_statement["ebit"]
-            logger.info(f"{symbol}: Fetched EBIT from Alpha Vantage: {result['ebit']:,.0f}")
+            logger.debug(f"{symbol}: Fetched EBIT from Alpha Vantage: {result['ebit']:,.0f}")
 
     return result
 

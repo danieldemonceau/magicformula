@@ -187,10 +187,8 @@ def extract_financial_data_from_yfinance(
             ebit = ebitda * multiplier
             is_ebitda_fallback = True
             if symbol:
-                logger.warning(
-                    f"{symbol}: EBIT unavailable, using adjusted EBITDA (×{multiplier}). "
-                    f"Original EBITDA: ${ebitda:,.0f}, Adjusted EBIT: ${ebit:,.0f}. "
-                    f"Note: This approximation may not be accurate for all industries.",
+                logger.debug(
+                    f"{symbol}: EBIT unavailable, using EBITDA × {multiplier} = ${ebit:,.0f}",
                 )
 
     current_assets_raw = info.get("totalCurrentAssets")

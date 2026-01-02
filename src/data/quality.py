@@ -9,6 +9,9 @@ from src.data.models.ticker_status import TickerStatus
 
 logger = logging.getLogger("magicformula")
 
+# Track warnings to avoid duplicates (symbol:outlier_type)
+_warned_outliers: set[str] = set()
+
 OUTLIER_THRESHOLDS = {
     "pe_ratio": settings.outlier_pe_ratio,
     "price_to_sales": settings.outlier_price_to_sales,
@@ -33,20 +36,28 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         List of outlier field names detected.
     """
     outliers: list[str] = []
+    symbol = ticker_data.symbol
+
+    def _warn_once(outlier_type: str, message: str) -> None:
+        """Log warning only once per symbol:outlier_type combination."""
+        key = f"{symbol}:{outlier_type}"
+        if key not in _warned_outliers:
+            _warned_outliers.add(key)
+            logger.warning(message)
 
     if ticker_data.earnings_yield is not None and ticker_data.earnings_yield > 0:
         pe_ratio = 1.0 / ticker_data.earnings_yield
         if pe_ratio > OUTLIER_THRESHOLDS["pe_ratio"]:
             outliers.append("pe_ratio")
-            logger.warning(f"{ticker_data.symbol}: Suspicious P/E ratio: {pe_ratio:.2f}")
+            _warn_once("pe_ratio", f"{symbol}: Suspicious P/E ratio: {pe_ratio:.2f}")
 
     if (
         ticker_data.price_to_sales is not None
         and ticker_data.price_to_sales > OUTLIER_THRESHOLDS["price_to_sales"]
     ):
         outliers.append("price_to_sales")
-        logger.warning(
-            f"{ticker_data.symbol}: Suspicious P/S ratio: {ticker_data.price_to_sales:.2f}"
+        _warn_once(
+            "price_to_sales", f"{symbol}: Suspicious P/S ratio: {ticker_data.price_to_sales:.2f}"
         )
 
     if (
@@ -54,8 +65,9 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         and ticker_data.earnings_yield > OUTLIER_THRESHOLDS["earnings_yield"]
     ):
         outliers.append("earnings_yield")
-        logger.warning(
-            f"{ticker_data.symbol}: Suspicious Earnings Yield: {ticker_data.earnings_yield:.2%}"
+        _warn_once(
+            "earnings_yield",
+            f"{symbol}: Suspicious Earnings Yield: {ticker_data.earnings_yield:.2%}",
         )
 
     if (
@@ -63,15 +75,18 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         and ticker_data.return_on_capital > OUTLIER_THRESHOLDS["return_on_capital"]
     ):
         outliers.append("return_on_capital")
-        logger.warning(f"{ticker_data.symbol}: Suspicious ROC: {ticker_data.return_on_capital:.2%}")
+        _warn_once(
+            "return_on_capital", f"{symbol}: Suspicious ROC: {ticker_data.return_on_capital:.2%}"
+        )
 
     if (
         ticker_data.acquirers_multiple is not None
         and ticker_data.acquirers_multiple > OUTLIER_THRESHOLDS["acquirers_multiple"]
     ):
         outliers.append("acquirers_multiple")
-        logger.warning(
-            f"{ticker_data.symbol}: Suspicious Acquirer's Multiple: {ticker_data.acquirers_multiple:.2f}"
+        _warn_once(
+            "acquirers_multiple",
+            f"{symbol}: Suspicious Acquirer's Multiple: {ticker_data.acquirers_multiple:.2f}",
         )
 
     if (
@@ -79,22 +94,21 @@ def detect_outliers(ticker_data: TickerData) -> list[str]:
         and ticker_data.market_cap > OUTLIER_THRESHOLDS["market_cap"]
     ):
         outliers.append("market_cap")
-        logger.warning(
-            f"{ticker_data.symbol}: Suspicious Market Cap: ${ticker_data.market_cap:,.0f}"
-        )
+        _warn_once("market_cap", f"{symbol}: Suspicious Market Cap: ${ticker_data.market_cap:,.0f}")
 
     if (
         ticker_data.enterprise_value is not None
         and ticker_data.enterprise_value > OUTLIER_THRESHOLDS["enterprise_value"]
     ):
         outliers.append("enterprise_value")
-        logger.warning(
-            f"{ticker_data.symbol}: Suspicious Enterprise Value: ${ticker_data.enterprise_value:,.0f}"
+        _warn_once(
+            "enterprise_value",
+            f"{symbol}: Suspicious Enterprise Value: ${ticker_data.enterprise_value:,.0f}",
         )
 
     if ticker_data.price is not None and ticker_data.price > OUTLIER_THRESHOLDS["price"]:
         outliers.append("price")
-        logger.warning(f"{ticker_data.symbol}: Suspicious Price: ${ticker_data.price:,.2f}")
+        _warn_once("price", f"{symbol}: Suspicious Price: ${ticker_data.price:,.2f}")
 
     return outliers
 
@@ -231,3 +245,8 @@ def assess_data_quality(ticker_data: TickerData) -> TickerData:
             "quality_score": quality_score,
         }
     )
+
+
+def clear_warning_cache() -> None:
+    """Clear the outlier warning cache. Useful between analysis runs."""
+    _warned_outliers.clear()

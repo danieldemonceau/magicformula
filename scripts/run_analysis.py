@@ -428,6 +428,10 @@ Examples:
 
     # Calculate missing metrics for tickers that have base data but missing calculated metrics
     updated_ticker_data = []
+    # Track Alpha Vantage fallback attempts for summary logging
+    av_fallback_roc_failed: list[str] = []  # ROC calc failed, trying AV
+    av_fallback_missing_nwc_nfa: list[str] = []  # Missing NWC/NFA, trying AV
+    av_fallback_success: list[str] = []  # Successfully got data from AV
     # Log summary of what data we have
     logger.debug("Data availability summary before calculations:")
     sample_ticker = ticker_data[0] if ticker_data else None
@@ -512,9 +516,7 @@ Examples:
                     "Capital Employed must be positive" in error_msg
                     or "must be positive" in error_msg
                 ):
-                    logger.info(
-                        f"{symbol}: ROC calculation failed ({error_msg}), trying Alpha Vantage fallback..."
-                    )
+                    av_fallback_roc_failed.append(symbol)
                     try:
                         from src.data.fetchers.alphavantage_fetcher import (
                             fetch_missing_financial_data_alphavantage,
@@ -546,9 +548,7 @@ Examples:
                                     ticker_dict.get("net_working_capital") or 0.0,
                                     ticker_dict.get("net_fixed_assets") or 0.0,
                                 )
-                                logger.info(
-                                    f"{symbol}: Successfully calculated ROC using Alpha Vantage data"
-                                )
+                                av_fallback_success.append(symbol)
                             except (MissingDataError, InvalidDataError, ValueError) as e2:
                                 logger.debug(
                                     f"{symbol}: Still could not calculate ROC after Alpha Vantage: {e2}"
@@ -561,9 +561,7 @@ Examples:
                     )
         elif has_ebit and not has_roc and not has_nwc and not has_nfa:
             # Try Alpha Vantage fallback for missing NWC/NFA
-            logger.info(
-                f"{symbol}: Missing NWC/NFA for ROC calculation, trying Alpha Vantage fallback..."
-            )
+            av_fallback_missing_nwc_nfa.append(symbol)
             try:
                 from src.data.fetchers.alphavantage_fetcher import (
                     fetch_missing_financial_data_alphavantage,
@@ -615,6 +613,20 @@ Examples:
         # Assess data quality
         updated_ticker = assess_data_quality(updated_ticker)
         updated_ticker_data.append(updated_ticker)
+
+    # Log summary of Alpha Vantage fallback attempts
+    if av_fallback_roc_failed:
+        logger.info(
+            f"Alpha Vantage fallback (ROC calc failed) attempted for {len(av_fallback_roc_failed)} tickers: "
+            f"{', '.join(av_fallback_roc_failed[:5])}{'...' if len(av_fallback_roc_failed) > 5 else ''}"
+        )
+    if av_fallback_missing_nwc_nfa:
+        logger.info(
+            f"Alpha Vantage fallback (missing NWC/NFA) attempted for {len(av_fallback_missing_nwc_nfa)} tickers: "
+            f"{', '.join(av_fallback_missing_nwc_nfa[:5])}{'...' if len(av_fallback_missing_nwc_nfa) > 5 else ''}"
+        )
+    if av_fallback_success:
+        logger.info(f"Alpha Vantage fallback successful for {len(av_fallback_success)} tickers")
 
     ticker_data = updated_ticker_data
 
