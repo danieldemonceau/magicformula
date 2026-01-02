@@ -849,20 +849,19 @@ def merge_csv_results(
 
         # =====================================================================
         # ACQUIRER'S MULTIPLE VALIDATION
-        # Requires: acquirers_multiple (which needs ebit and enterprise_value)
+        # Requires: acquirers_multiple (positive value = valid)
+        # Note: We accept AM from input CSVs even if ebit/ev weren't fetched
         # =====================================================================
         am = merged_row_data.get("acquirers_multiple")
-        ebit = merged_row_data.get("ebit")
-        ev = merged_row_data.get("enterprise_value")
 
-        # AM is valid only if acquirers_multiple is a valid number
-        # AND the underlying components (ebit, ev) exist
-        am_valid = is_valid_numeric(am) and is_valid_numeric(ebit) and is_valid_numeric(ev)
+        # AM is valid if it's a positive finite number
+        # (positive AM means positive EBIT and positive EV)
+        am_valid = is_valid_numeric(am) and float(str(am)) > 0
 
         if not am_valid:
             # Clear AM rank - it's invalid
             merged_row_data["acquirers_multiple_rank"] = None
-            # Also clear acquirers_multiple if it's NaN
+            # Also clear acquirers_multiple if it's not a valid positive number
             if not is_valid_numeric(am):
                 merged_row_data["acquirers_multiple"] = None
         else:
@@ -1029,20 +1028,27 @@ def merge_csv_results(
     weight_momentum = 0.20
 
     # Calculate composite scores
+    # REQUIRE: MF score AND AM rank (both mandatory)
+    # OPTIONAL: Momentum - use neutral 50th percentile if missing (rate limiting)
+    NEUTRAL_PERCENTILE = 50.0  # Neutral position when momentum data missing
+
     composite_scores: list[tuple[int, float]] = []
     for idx, merged_row_data in enumerate(merged_rows):
         mf_pct = mf_percentiles.get(idx)
         am_pct = am_percentiles.get(idx)
         mom_pct = mom_percentiles.get(idx)
 
-        # REQUIRE ALL THREE components (MF, AM, Momentum) for composite calculation
-        # Tickers missing ANY component will NOT be considered for investment
-        if mf_pct is not None and am_pct is not None and mom_pct is not None:
-            composite = (mf_pct * weight_mf) + (am_pct * weight_am) + (mom_pct * weight_momentum)
+        # MF and AM are REQUIRED for composite score
+        if mf_pct is not None and am_pct is not None:
+            # Use neutral 50th percentile for momentum if missing
+            effective_mom_pct = mom_pct if mom_pct is not None else NEUTRAL_PERCENTILE
+            composite = (
+                (mf_pct * weight_mf) + (am_pct * weight_am) + (effective_mom_pct * weight_momentum)
+            )
             composite_scores.append((idx, composite))
             merged_row_data["composite_score"] = round(composite, 2)
         else:
-            # Mark as not investable - missing required data
+            # Mark as not investable - missing required MF or AM data
             merged_row_data["composite_score"] = None
 
     # Sort by composite score to determine ranks and top picks
