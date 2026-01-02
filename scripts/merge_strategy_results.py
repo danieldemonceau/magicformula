@@ -636,7 +636,6 @@ def merge_csv_results(
         # CALCULATE AM-SPECIFIC METRICS FOR ALL TICKERS
         # =====================================================================
         # Get ticker data for calculations
-        ticker_data = fetched_lookup.get(symbol)
 
         # Debt:Equity (%) - total_debt / shareholders_equity * 100
         if "debt_to_equity" not in merged_row or merged_row.get("debt_to_equity") is None:
