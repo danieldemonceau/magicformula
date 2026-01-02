@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import csv
 import logging
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -790,44 +791,69 @@ def merge_csv_results(
     # Configurable: number of top picks to highlight
     top_n_picks = 6
 
-    # Extract values for ranking (only rows with valid data)
-    mf_scores: list[tuple[int, float | None]] = []  # (row_idx, value)
-    am_ranks: list[tuple[int, float | None]] = []
-    momentum_values: list[tuple[int, float | None]] = []
+    # Helper to check if a value is valid (not None, not NaN, numeric)
+    def is_valid_numeric(val: Any) -> bool:
+        """Check if value is a valid finite number."""
+        if val is None:
+            return False
+        try:
+            f = float(val)
+            return math.isfinite(f)  # Rejects NaN and Inf
+        except (ValueError, TypeError):
+            return False
+
+    # First pass: Validate MF components and clear invalid scores
+    for merged_row_data in merged_rows:
+        ey = merged_row_data.get("earnings_yield")
+        roc = merged_row_data.get("return_on_capital")
+
+        # MF score requires BOTH earnings_yield AND return_on_capital to be valid
+        if not is_valid_numeric(ey) or not is_valid_numeric(roc):
+            # Clear MF score and ranks - they're invalid
+            merged_row_data["magic_formula_score"] = None
+            merged_row_data["earnings_yield_rank"] = None
+            merged_row_data["return_on_capital_rank"] = None
+
+    # Helper to get valid numeric value or None
+    def get_valid_float(val: Any) -> float | None:
+        """Return float if value is valid finite number, else None."""
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            return f if math.isfinite(f) else None
+        except (ValueError, TypeError):
+            return None
+
+    # Extract values for ranking (only rows with VALID data)
+    mf_scores: list[tuple[int, float]] = []  # (row_idx, value)
+    am_ranks: list[tuple[int, float]] = []
+    momentum_values: list[tuple[int, float]] = []
 
     for idx, merged_row_data in enumerate(merged_rows):
-        # Magic Formula score (lower = better)
-        mf_val = merged_row_data.get("magic_formula_score")
-        if mf_val is not None:
-            try:
-                mf_scores.append((idx, float(mf_val)))
-            except (ValueError, TypeError):
-                pass  # Skip non-numeric values
+        # Magic Formula score (lower = better) - must be valid finite number
+        mf_float = get_valid_float(merged_row_data.get("magic_formula_score"))
+        if mf_float is not None:
+            mf_scores.append((idx, mf_float))
 
-        # Acquirer's Multiple rank (lower = better)
-        am_rank_val = merged_row_data.get("acquirers_multiple_rank")
-        if am_rank_val is not None:
-            try:
-                am_ranks.append((idx, float(am_rank_val)))
-            except (ValueError, TypeError):
-                pass  # Skip non-numeric values
+        # Acquirer's Multiple rank (lower = better) - must be valid finite number
+        am_float = get_valid_float(merged_row_data.get("acquirers_multiple_rank"))
+        if am_float is not None:
+            am_ranks.append((idx, am_float))
 
         # 6-month price index (higher = better, we'll invert for ranking)
-        mom_val = merged_row_data.get("price_index_6month")
-        if mom_val is not None:
-            try:
-                momentum_values.append((idx, float(mom_val)))
-            except (ValueError, TypeError):
-                pass  # Skip non-numeric values
+        mom_float = get_valid_float(merged_row_data.get("price_index_6month"))
+        if mom_float is not None:
+            momentum_values.append((idx, mom_float))
 
     # Calculate percentile ranks (0-100, lower = better for all)
     def calculate_percentile_ranks(
-        values: list[tuple[int, float | None]], lower_is_better: bool = True
+        values: list[tuple[int, float]], lower_is_better: bool = True
     ) -> dict[int, float]:
         """Calculate percentile ranks for values.
 
         Args:
-            values: List of (row_idx, value) tuples.
+            values: List of (row_idx, value) tuples (already validated as finite).
             lower_is_better: If True, lower values get lower (better) percentiles.
 
         Returns:
@@ -836,17 +862,12 @@ def merge_csv_results(
         if not values:
             return {}
 
-        # Filter out None values
-        valid_values = [(idx, v) for idx, v in values if v is not None]
-        if not valid_values:
-            return {}
-
         # Sort by value
         if lower_is_better:
-            sorted_values = sorted(valid_values, key=lambda x: x[1])
+            sorted_values = sorted(values, key=lambda x: x[1])
         else:
             # Higher is better → sort descending so highest gets rank 1
-            sorted_values = sorted(valid_values, key=lambda x: x[1], reverse=True)
+            sorted_values = sorted(values, key=lambda x: x[1], reverse=True)
 
         n = len(sorted_values)
         percentiles: dict[int, float] = {}
@@ -877,17 +898,17 @@ def merge_csv_results(
         am_pct = am_percentiles.get(idx)
         mom_pct = mom_percentiles.get(idx)
 
-        # Only calculate if we have at least MF or AM score
-        if mf_pct is not None or am_pct is not None:
-            # Use available percentiles, default missing to 50 (neutral)
-            mf_component = (mf_pct if mf_pct is not None else 50.0) * weight_mf
-            am_component = (am_pct if am_pct is not None else 50.0) * weight_am
+        # REQUIRE BOTH MF AND AM scores to be valid for composite calculation
+        # Tickers missing either will NOT be considered for investment
+        if mf_pct is not None and am_pct is not None:
+            # Momentum is optional - use neutral 50 if missing
             mom_component = (mom_pct if mom_pct is not None else 50.0) * weight_momentum
 
-            composite = mf_component + am_component + mom_component
+            composite = (mf_pct * weight_mf) + (am_pct * weight_am) + mom_component
             composite_scores.append((idx, composite))
             merged_row_data["composite_score"] = round(composite, 2)
         else:
+            # Mark as not investable - missing required data
             merged_row_data["composite_score"] = None
 
     # Sort by composite score to determine ranks and top picks
