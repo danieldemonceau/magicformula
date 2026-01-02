@@ -143,6 +143,7 @@ class CSVReader:
                         try:
                             price = float(price_str)
                         except ValueError:
+                            # Invalid price format, leave as None
                             pass
 
                     market_cap = None
@@ -162,6 +163,7 @@ class CSVReader:
                                 float(market_cap_str) * 1_000_000
                             )  # Convert millions to actual
                         except ValueError:
+                            # Invalid market cap format, leave as None
                             pass
 
                     enterprise_value = None
@@ -181,6 +183,7 @@ class CSVReader:
                                 float(ev_str) * 1_000_000
                             )  # Convert millions to actual
                         except ValueError:
+                            # Invalid enterprise value format, leave as None
                             pass
 
                     # OI = Operating Income = EBIT
@@ -199,6 +202,7 @@ class CSVReader:
                         try:
                             ebit = float(oi_str) * 1_000_000  # Convert millions to actual
                         except ValueError:
+                            # Invalid operating income format, leave as None
                             pass
 
                     # Get industry

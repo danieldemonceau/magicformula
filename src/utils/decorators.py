@@ -44,7 +44,9 @@ def retry(
                     else:
                         raise
 
-            raise last_exception  # type: ignore[misc]
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Retry decorator failed without exception")
 
         return wrapper
 

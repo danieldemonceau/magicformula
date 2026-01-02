@@ -90,7 +90,6 @@ class YFinanceFetcher(BaseFetcher):
         enterprise_value = metrics["enterprise_value"]
         earnings_yield = metrics["earnings_yield"]
         return_on_capital = metrics["return_on_capital"]
-        acquirers_multiple = metrics["acquirers_multiple"]
 
         # Debug logging for missing Magic Formula metrics
         if earnings_yield is None or return_on_capital is None:

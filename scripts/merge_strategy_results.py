@@ -343,6 +343,7 @@ def merge_csv_results(
                     ticker_dict["enterprise_value"],
                 )
             except Exception:
+                # Calculation failed (invalid data), leave as None
                 pass
 
         # Calculate return_on_capital if missing
@@ -358,6 +359,7 @@ def merge_csv_results(
                     ticker_dict.get("net_fixed_assets") or 0.0,
                 )
             except (InvalidDataError, MissingDataError, ValueError):
+                # Calculation failed (invalid/missing data), leave as None
                 pass
 
         # Calculate acquirers_multiple if missing
@@ -372,6 +374,7 @@ def merge_csv_results(
                     ticker_dict["enterprise_value"],
                 )
             except Exception:
+                # Calculation failed (invalid data), leave as None
                 pass
 
         updated_ticker = TickerData(**ticker_dict)

@@ -414,7 +414,7 @@ async def calculate_metrics_from_financial_data_async(
             # If still no ROC, calculate it ourselves using NWC and NFA
             if return_on_capital is None and ebit_float > 0:
                 # Try Alpha Vantage fallback if NWC/NFA data is missing
-                if (nwc_val is None or nfa_val is None) and ebit_float > 0:
+                if nwc_val is None or nfa_val is None:
                     missing_fields = []
                     if nwc_val is None:
                         missing_fields.append("net_working_capital")
