@@ -458,7 +458,6 @@ def merge_csv_results(
     ]
 
     # Fields to consolidate (map various names to canonical name)
-    name_fields = ["Name", "Company Name (in alphabetical order)", "company_name"]
     industry_fields = ["Industry"]
     sector_fields = ["Sector"]
 
