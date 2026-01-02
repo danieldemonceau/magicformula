@@ -62,12 +62,6 @@ class CSVReader:
                             )
 
                     # Get company name if available
-                    company_name = (
-                        row.get("Company Name (in alphabetical order)", "")
-                        or row.get("Company Name", "")
-                        or row.get("Name", "")
-                    ).strip()
-
                     ticker_data = TickerData(
                         symbol=ticker,
                         status=TickerStatus.ACTIVE,
