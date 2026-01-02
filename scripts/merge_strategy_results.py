@@ -404,11 +404,15 @@ def merge_csv_results(
 
     # Build final merged rows with intelligent deduplication
     logger.info("Building final merged output...")
-    merged_rows: list[dict] = []
+    merged_rows: list[dict[str, Any]] = []
     all_fieldnames_set: set[str] = set()
 
     # Define preferred column order (user-friendly)
     preferred_order = [
+        # INVESTMENT DECISION COLUMNS (most important - at the top)
+        "top_pick",
+        "composite_rank",
+        "composite_score",
         # Basic identification
         symbol_column,
         "Company Name (in alphabetical order)",
@@ -515,7 +519,7 @@ def merge_csv_results(
     new_fields: set[str] = set()
 
     for symbol in sorted(all_symbols):
-        merged_row: dict = {}
+        merged_row: dict[str, Any] = {}
         mf_input = mf_lookup.get(symbol, {})
         am_input = am_lookup.get(symbol, {})
         mf_result = mf_results_lookup.get(symbol, {})
@@ -573,6 +577,151 @@ def merge_csv_results(
 
     # Add any new fields discovered during merging to the fieldnames set
     all_fieldnames_set.update(new_fields)
+
+    # =========================================================================
+    # COMPOSITE SCORING: 50% MF + 30% AM + 20% Momentum (6-month price index)
+    # Lower composite score = better investment candidate
+    # =========================================================================
+    logger.info("Calculating composite scores for investment ranking...")
+
+    # Configurable: number of top picks to highlight
+    top_n_picks = 6
+
+    # Extract values for ranking (only rows with valid data)
+    mf_scores: list[tuple[int, float | None]] = []  # (row_idx, value)
+    am_ranks: list[tuple[int, float | None]] = []
+    momentum_values: list[tuple[int, float | None]] = []
+
+    for idx, merged_row_data in enumerate(merged_rows):
+        # Magic Formula score (lower = better)
+        mf_val = merged_row_data.get("magic_formula_score")
+        if mf_val is not None:
+            try:
+                mf_scores.append((idx, float(mf_val)))
+            except (ValueError, TypeError):
+                pass  # Skip non-numeric values
+
+        # Acquirer's Multiple rank (lower = better)
+        am_rank_val = merged_row_data.get("acquirers_multiple_rank")
+        if am_rank_val is not None:
+            try:
+                am_ranks.append((idx, float(am_rank_val)))
+            except (ValueError, TypeError):
+                pass  # Skip non-numeric values
+
+        # 6-month price index (higher = better, we'll invert for ranking)
+        mom_val = merged_row_data.get("price_index_6month")
+        if mom_val is not None:
+            try:
+                momentum_values.append((idx, float(mom_val)))
+            except (ValueError, TypeError):
+                pass  # Skip non-numeric values
+
+    # Calculate percentile ranks (0-100, lower = better for all)
+    def calculate_percentile_ranks(
+        values: list[tuple[int, float | None]], lower_is_better: bool = True
+    ) -> dict[int, float]:
+        """Calculate percentile ranks for values.
+
+        Args:
+            values: List of (row_idx, value) tuples.
+            lower_is_better: If True, lower values get lower (better) percentiles.
+
+        Returns:
+            Dict mapping row_idx to percentile (0-100).
+        """
+        if not values:
+            return {}
+
+        # Filter out None values
+        valid_values = [(idx, v) for idx, v in values if v is not None]
+        if not valid_values:
+            return {}
+
+        # Sort by value
+        if lower_is_better:
+            sorted_values = sorted(valid_values, key=lambda x: x[1])
+        else:
+            # Higher is better → sort descending so highest gets rank 1
+            sorted_values = sorted(valid_values, key=lambda x: x[1], reverse=True)
+
+        n = len(sorted_values)
+        percentiles: dict[int, float] = {}
+        for rank, (idx, _) in enumerate(sorted_values, start=1):
+            # Percentile: (rank - 1) / (n - 1) * 100, or 0 if n=1
+            if n > 1:
+                percentiles[idx] = ((rank - 1) / (n - 1)) * 100
+            else:
+                percentiles[idx] = 0.0
+
+        return percentiles
+
+    # Calculate percentiles for each factor
+    mf_percentiles = calculate_percentile_ranks(mf_scores, lower_is_better=True)
+    am_percentiles = calculate_percentile_ranks(am_ranks, lower_is_better=True)
+    # Momentum: higher is better, so we pass lower_is_better=False
+    mom_percentiles = calculate_percentile_ranks(momentum_values, lower_is_better=False)
+
+    # Weights for composite score
+    weight_mf = 0.50
+    weight_am = 0.30
+    weight_momentum = 0.20
+
+    # Calculate composite scores
+    composite_scores: list[tuple[int, float]] = []
+    for idx, merged_row_data in enumerate(merged_rows):
+        mf_pct = mf_percentiles.get(idx)
+        am_pct = am_percentiles.get(idx)
+        mom_pct = mom_percentiles.get(idx)
+
+        # Only calculate if we have at least MF or AM score
+        if mf_pct is not None or am_pct is not None:
+            # Use available percentiles, default missing to 50 (neutral)
+            mf_component = (mf_pct if mf_pct is not None else 50.0) * weight_mf
+            am_component = (am_pct if am_pct is not None else 50.0) * weight_am
+            mom_component = (mom_pct if mom_pct is not None else 50.0) * weight_momentum
+
+            composite = mf_component + am_component + mom_component
+            composite_scores.append((idx, composite))
+            merged_row_data["composite_score"] = round(composite, 2)
+        else:
+            merged_row_data["composite_score"] = None
+
+    # Sort by composite score to determine ranks and top picks
+    composite_scores.sort(key=lambda x: x[1])
+
+    # Assign composite ranks and top_pick flags
+    for rank, (idx, _) in enumerate(composite_scores, start=1):
+        merged_rows[idx]["composite_rank"] = rank
+        merged_rows[idx]["top_pick"] = rank <= top_n_picks
+
+    # Mark rows without composite score
+    for merged_row_data in merged_rows:
+        if "composite_rank" not in merged_row_data:
+            merged_row_data["composite_rank"] = None
+            merged_row_data["top_pick"] = False
+
+    # Add new fields to fieldnames set
+    all_fieldnames_set.add("composite_score")
+    all_fieldnames_set.add("composite_rank")
+    all_fieldnames_set.add("top_pick")
+
+    # Sort merged_rows by composite_rank (top picks first, then by rank)
+    def sort_key_for_output(row: dict[str, Any]) -> tuple[int, int]:
+        """Sort key: top picks first, then by composite rank."""
+        is_top = row.get("top_pick", False)
+        rank = row.get("composite_rank")
+        # Top picks first (0), then others (1)
+        # Within each group, sort by rank (None goes last)
+        return (0 if is_top else 1, rank if rank is not None else 9999)
+
+    merged_rows.sort(key=sort_key_for_output)
+
+    logger.info(f"Composite scoring complete. Top {top_n_picks} picks identified.")
+
+    # =========================================================================
+    # BUILD FINAL COLUMN ORDER
+    # =========================================================================
 
     # Build final column order: preferred order first, then remaining fields
     all_fieldnames: list[str] = []
